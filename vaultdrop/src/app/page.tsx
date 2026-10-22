@@ -27,6 +27,7 @@ import { FilePreviewModal } from '@/components/FilePreviewModal';
 import { BulkActionBar } from '@/components/BulkActionBar';
 import { PanicButton } from '@/components/PanicButton';
 import { IdleWarningBanner } from '@/components/IdleWarningBanner';
+import { AppleColorText } from '@/components/AppleColorText';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -247,7 +248,9 @@ export default function DashboardPage() {
                   @{user.username}
                 </span>
               </div>
-              <span className="text-[11px] text-[#6B6B6B] block font-mono">Private Ephemeral Vault</span>
+              <span className="text-[11px] text-[#6B6B6B] block font-mono">
+                Private Ephemeral Vault • <AppleColorText text="Air-Gap Shield" className="text-[11px]" mode="chars" />
+              </span>
             </div>
           </div>
 
@@ -287,11 +290,11 @@ export default function DashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[13px] text-[#6B6B6B] shadow-apple">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Zero credentials typed on this workstation • 24h file auto-destruction</span>
+            <span>Zero credentials typed on workstation • <AppleColorText text="Zero Trace Active" className="text-[12px] font-semibold" mode="chars" /></span>
           </div>
           <div className="flex items-center gap-1.5 text-[12px] text-[#014BAA] font-medium font-mono">
             <Sparkles className="w-4 h-4" />
-            <span>5-day auto-purge guarantees zero-cost</span>
+            <span>24h auto-destruction enabled</span>
           </div>
         </div>
 

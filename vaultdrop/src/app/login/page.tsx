@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
+import { AppleColorText } from '@/components/AppleColorText';
 import { loginWithUsername, registerWithUsername, getCurrentUser } from '@/lib/auth-helpers';
 
 function LoginContent() {
@@ -84,8 +85,11 @@ function LoginContent() {
               <Shield className="w-5 h-5 fill-white" />
             </div>
             <div>
-              <span className="text-[17px] font-bold tracking-tight text-[#014BAA]">Vaultdrop</span>
-              <span className="text-[11px] text-[#6B6B6B] block -mt-1 font-mono">v1.0 • Ephemeral File Vault</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[17px] font-bold tracking-tight text-[#014BAA]">Vaultdrop</span>
+                <AppleColorText text="like Apple." className="text-[11px] font-semibold ml-1 hidden sm:inline-block" mode="chars" />
+              </div>
+              <span className="text-[11px] text-[#6B6B6B] block -mt-0.5 font-mono">v1.0 • Ephemeral File Vault</span>
             </div>
           </div>
 
@@ -109,10 +113,10 @@ function LoginContent() {
             <div className="space-y-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#014BAA]/10 text-[#014BAA] text-[12px] font-semibold tracking-wide uppercase font-mono">
                 <Sparkles className="w-3.5 h-3.5" />
-                The Problem & Solution
+                <span>Crafted <AppleColorText text="like Apple." className="normal-case text-[12px]" mode="chars" /></span>
               </div>
               <h2 className="text-[23px] font-bold text-[#1A1A1A] tracking-tight leading-snug">
-                Private File Vault for Public Workstations
+                Private File Vault for <AppleColorText text="Public Labs." mode="chars" />
               </h2>
               <p className="text-[14px] text-[#6B6B6B] leading-relaxed">
                 Shared computer labs force students to log into personal accounts just to print or grab one file — exposing credentials to keyloggers, cached sessions, and shoulder surfers.
@@ -301,7 +305,7 @@ function LoginContent() {
                 Defense in Depth
               </div>
               <h2 className="text-[23px] font-bold text-[#1A1A1A] tracking-tight leading-snug">
-                Engineered for Shared Lab Terminals
+                Shared Terminals. <AppleColorText text="Zero Trace." mode="chars" />
               </h2>
               <p className="text-[14px] text-[#6B6B6B] leading-relaxed">
                 Every feature is designed to solve a specific shared computer threat: keyloggers, forgotten logins, and unclosed tabs.

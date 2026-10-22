@@ -260,7 +260,7 @@ Crafted with obsessive attention to privacy, design, and developer experience by
 
 ### **Abhijay Chauhan**
 - **GitHub**: [@theAbhijayChauhan](https://github.com/theAbhijayChauhan)
-- **Project Repository**: [Vaultdrop on GitHub](https://github.com/theAbhijayChauhan)
+- **Project Repository**: [Vaultdrop on GitHub](https://github.com/theAbhijayChauhan/vault-drop)
 
 Feel free to star ⭐ the repository if this project helped you stay secure in shared lab environments!
 

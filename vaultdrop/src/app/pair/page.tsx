@@ -17,6 +17,7 @@ import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { getCurrentUser, loginWithUsername, registerWithUsername } from '@/lib/auth-helpers';
 import { approvePairingSession } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
+import { AppleColorText } from '@/components/AppleColorText';
 
 function PairContent() {
   const searchParams = useSearchParams();
@@ -156,7 +157,9 @@ function PairContent() {
                   <div className="w-14 h-14 bg-[#014BAA]/10 text-[#014BAA] rounded-2xl flex items-center justify-center mx-auto mb-3">
                     <Laptop className="w-7 h-7" />
                   </div>
-                  <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">Authorize Lab PC?</h2>
+                  <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
+                    Authorize Lab PC? <AppleColorText text="Zero Trace." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
+                  </h2>
                   <p className="text-[13px] text-[#6B6B6B] mt-1">
                     A shared workstation scanned this QR request to access your vault.
                   </p>
@@ -209,7 +212,8 @@ function PairContent() {
                     <ShieldCheck className="w-7 h-7" />
                   </div>
                   <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
-                    {isRegisterMode ? 'Create Vault & Unlock' : 'Sign In to Authorize'}
+                    {isRegisterMode ? 'Create Vault & Unlock' : 'Sign In to Authorize'}{' '}
+                    <AppleColorText text="Air-Gap Safe." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
                   </h2>
                   <p className="text-[13px] text-[#6B6B6B] mt-1">
                     Enter your credentials on your private phone to unlock the lab computer safely.
