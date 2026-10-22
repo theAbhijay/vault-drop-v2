@@ -13,6 +13,7 @@ import {
   CheckSquare,
   Square
 } from 'lucide-react';
+import { OpenSourceLink } from '@/components/OpenSourceLink';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip } from '@/lib/file-helpers';
@@ -263,6 +264,9 @@ export default function DashboardPage() {
               <Clock className="w-4 h-4 text-[#014BAA]" />
               <span>TTL: {sessionTimeString}</span>
             </div>
+
+            {/* Open Source Navbar Link */}
+            <OpenSourceLink className="rounded-xl px-3 py-2 text-[12px]" showLabelOnMobile={false} />
 
             {/* Logout Button */}
             <button

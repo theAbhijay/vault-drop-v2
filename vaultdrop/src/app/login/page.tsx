@@ -21,6 +21,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
+import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { loginWithUsername, registerWithUsername, getCurrentUser } from '@/lib/auth-helpers';
 
 function LoginContent() {
@@ -88,9 +89,13 @@ function LoginContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-[13px] text-[#6B6B6B] bg-white px-3.5 py-1.5 rounded-full border border-[#E5DCD4] shadow-sm">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-medium text-[#1A1A1A]">Shared Terminal Mode Active</span>
+          <div className="flex items-center gap-3">
+            <OpenSourceLink />
+
+            <div className="hidden sm:flex items-center gap-2 text-[13px] text-[#6B6B6B] bg-white px-3.5 py-1.5 rounded-full border border-[#E5DCD4] shadow-sm">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-medium text-[#1A1A1A]">Shared Terminal Mode Active</span>
+            </div>
           </div>
         </div>
       </header>
