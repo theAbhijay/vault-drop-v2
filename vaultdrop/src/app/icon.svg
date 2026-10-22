@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="vaultGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#014BAA" />
+      <stop offset="100%" stop-color="#002D6B" />
+    </linearGradient>
+  </defs>
+  <!-- Rounded Shield Base -->
+  <rect width="32" height="32" rx="8" fill="url(#vaultGrad)" />
+  <!-- Vault / Shield Emblem -->
+  <path d="M16 6L23 9.5V15.5C23 19.8 20 23.6 16 25C12 23.6 9 19.8 9 15.5V9.5L16 6Z" fill="#FFFFFF" fill-opacity="0.2" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Keyhole / Core Lock -->
+  <circle cx="16" cy="14" r="2" fill="#FFFFFF" />
+  <path d="M15 15.5H17L17.5 19H14.5L15 15.5Z" fill="#FFFFFF" />
+</svg>

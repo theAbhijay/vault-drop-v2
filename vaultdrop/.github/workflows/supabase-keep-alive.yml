@@ -1,0 +1,43 @@
+name: Supabase Keep-Alive
+
+# Runs every 6 days at 00:00 UTC so Supabase never sleeps on the free tier (7-day pause limit)
+on:
+  schedule:
+    - cron: '0 0 */6 * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping-supabase:
+    name: Ping Supabase Project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Keep-Alive Ping to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_URL or SUPABASE_ANON_KEY secret is not configured in this GitHub repository."
+            echo "Please go to Settings -> Secrets and variables -> Actions and add SUPABASE_URL and SUPABASE_ANON_KEY."
+            exit 1
+          fi
+
+          echo "Pinging Supabase at $SUPABASE_URL to prevent project pause..."
+          
+          # Query a lightweight public RPC endpoint (is_username_taken) to wake the database
+          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "$SUPABASE_URL/rest/v1/rpc/is_username_taken" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"p_username": "keepalive_ping"}')
+
+          echo "HTTP Response Status: $HTTP_STATUS"
+          cat response.json
+          echo ""
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "::notice::Supabase project successfully pinged! 7-day inactivity timer reset."
+          else
+            echo "::warning::Received non-2xx status ($HTTP_STATUS). Database activity was still registered."
+          fi
