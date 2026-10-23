@@ -14,7 +14,8 @@ import {
   CheckSquare,
   Square,
   Smartphone,
-  QrCode
+  QrCode,
+  RefreshCw
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
@@ -42,6 +43,7 @@ export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   // Scene 1: PC Modal showing QR for phone
   const [isHandoffOpen, setIsHandoffOpen] = useState<boolean>(false);
@@ -102,7 +104,8 @@ export default function DashboardPage() {
     };
   }, [router]);
 
-  const loadFiles = async (userId: string) => {
+  const loadFiles = async (userId: string, silent = false) => {
+    if (!silent) setIsRefreshing(true);
     try {
       const list = await getUserFiles(userId);
       setFiles(list);
@@ -110,8 +113,48 @@ export default function DashboardPage() {
       console.error('Failed to load files', err);
     } finally {
       setLoading(false);
+      if (!silent) {
+        setIsRefreshing(false);
+      }
     }
   };
+
+  // In-app manual sync that does NOT reload the browser tab
+  const handleManualRefresh = async () => {
+    if (!user || isRefreshing) return;
+    setIsRefreshing(true);
+    await loadFiles(user.id, false);
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
+
+  // Real-Time Cross-Device Sync Heartbeat (PC uploads appear on Smartphone automatically)
+  useEffect(() => {
+    if (!user) return;
+
+    // 1. Automatic heartbeat sync every 8 seconds
+    const interval = setInterval(() => {
+      loadFiles(user.id, true);
+    }, 8000);
+
+    // 2. Immediate silent sync whenever phone unlocks or tab regains focus
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadFiles(user.id, true);
+      }
+    };
+    const handleFocus = () => {
+      loadFiles(user.id, true);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [user]);
 
   // 30-Minute Expanded Session Timer
   const handleTimeout = useCallback(async () => {
@@ -135,10 +178,10 @@ export default function DashboardPage() {
     router.push('/login');
   };
 
-  // Upload Handler
-  const handleUpload = async (file: File) => {
+  // Upload Handler with Live Progress Bar
+  const handleUpload = async (file: File, onProgress?: (percent: number) => void) => {
     if (!user) return;
-    const res = await uploadVaultFile(user.id, file);
+    const res = await uploadVaultFile(user.id, file, onProgress);
     if (res.success && res.file) {
       setFiles((prev) => [res.file!, ...prev]);
     } else if (res.error) {
@@ -388,8 +431,19 @@ export default function DashboardPage() {
 
         {/* Filter Chips & Search Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
-          {/* Category Filter Chips */}
+          {/* Category Filter Chips & In-App Sync */}
           <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 text-[13px] no-scrollbar">
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              title="Sync latest files across devices without refreshing the browser tab"
+              className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-[12px] sm:text-[13px] font-semibold transition-all tap-spring flex items-center gap-1.5 whitespace-nowrap cursor-pointer bg-white text-[#014BAA] border border-[#014BAA]/30 hover:bg-[#014BAA]/5 shadow-2xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#014BAA]' : 'text-[#014BAA]'}`} />
+              <span>{isRefreshing ? 'Syncing...' : 'Sync Vault'}</span>
+            </button>
+
             {[
               { id: 'all', label: 'All', count: counts.all },
               { id: 'image', label: 'Images', count: counts.image },

@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VaultDrop — Master Design & Architecture Manual</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm 18mm 16mm;
+    @bottom-right {
+      content: counter(page);
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1A1A1A;
+    background-color: #FFFFFF;
+    line-height: 1.6;
+    font-size: 10pt;
+    margin: 0;
+    padding: 0;
+  }
+
+  .page {
+    page-break-after: always;
+    position: relative;
+    padding-top: 10px;
+  }
+
+  .no-page-break {
+    page-break-inside: avoid;
+  }
+
+  /* Cover Page */
+  .cover {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 96vh;
+    padding: 40px 20px;
+    background: radial-gradient(circle at top right, rgba(0, 113, 227, 0.08), transparent 50%),
+                radial-gradient(circle at bottom left, rgba(175, 82, 222, 0.06), transparent 50%),
+                #FBFBFD;
+    border: 1px solid #E5DCD4;
+    border-radius: 24px;
+  }
+
+  .cover-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .cover-logo {
+    width: 48px;
+    height: 48px;
+    background: #014BAA;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    box-shadow: 0 4px 14px rgba(1, 75, 170, 0.3);
+  }
+
+  .brand-title {
+    font-size: 32pt;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
+    margin: 20px 0 10px 0;
+    color: #014BAA;
+  }
+
+  .brand-gradient {
+    background: linear-gradient(135deg, #0071E3, #AF52DE, #FF2D55, #FF9500);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .cover-subtitle {
+    font-size: 14pt;
+    font-weight: 500;
+    color: #4A4A4A;
+    max-width: 520px;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+  }
+
+  .cover-meta {
+    background: white;
+    border: 1px solid #E5DCD4;
+    border-radius: 16px;
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+  }
+
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .meta-label {
+    font-size: 7.5pt;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8E8E93;
+    margin-bottom: 2px;
+  }
+
+  .meta-value {
+    font-size: 10.5pt;
+    font-weight: 600;
+    color: #1A1A1A;
+  }
+
+  /* Typography & Layout */
+  h1 {
+    font-size: 18pt;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: #014BAA;
+    border-bottom: 2px solid #E5DCD4;
+    padding-bottom: 8px;
+    margin-top: 24px;
+    margin-bottom: 14px;
+  }
+
+  h2 {
+    font-size: 13pt;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #1A1A1A;
+    margin-top: 18px;
+    margin-bottom: 8px;
+  }
+
+  h3 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #2C3E50;
+    margin-top: 14px;
+    margin-bottom: 6px;
+  }
+
+  p {
+    margin: 0 0 10px 0;
+    color: #333333;
+    font-size: 9.5pt;
+    line-height: 1.55;
+  }
+
+  .lead {
+    font-size: 11pt;
+    font-weight: 400;
+    color: #4A4A4A;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+
+  /* Badge / Callout */
+  .callout {
+    background: #F8F3F0;
+    border-left: 4px solid #0071E3;
+    border-radius: 0 12px 12px 0;
+    padding: 12px 16px;
+    margin: 14px 0;
+  }
+
+  .callout.security {
+    border-left-color: #C8102E;
+    background: #FFF5F5;
+  }
+
+  .callout.apple {
+    border-left-color: #AF52DE;
+    background: #FAF5FF;
+  }
+
+  /* Palette Grid */
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin: 16px 0;
+  }
+
+  .color-card {
+    background: white;
+    border: 1px solid #E5DCD4;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+  }
+
+  .color-swatch {
+    height: 44px;
+    width: 100%;
+  }
+
+  .color-details {
+    padding: 8px 10px;
+  }
+
+  .color-name {
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #1A1A1A;
+  }
+
+  .color-hex {
+    font-size: 7.5pt;
+    font-family: 'JetBrains Mono', monospace;
+    color: #6B6B6B;
+  }
+
+  .color-role {
+    font-size: 7pt;
+    color: #8E8E93;
+    margin-top: 2px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 8.5pt;
+  }
+
+  th {
+    background: #F8F3F0;
+    color: #1A1A1A;
+    font-weight: 700;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid #E5DCD4;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  td {
+    padding: 7px 10px;
+    border: 1px solid #E5DCD4;
+    color: #333333;
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td {
+    background-color: #FCFAF8;
+  }
+
+  .code-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    background: #F1EAE4;
+    color: #014BAA;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid #E5DCD4;
+  }
+
+  /* Architectural Box */
+  .arch-box {
+    border: 1px solid #E5DCD4;
+    border-radius: 14px;
+    background: white;
+    padding: 14px 18px;
+    margin: 14px 0;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.02);
+  }
+
+  .arch-box-title {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #014BAA;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Feature Grid */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 14px 0;
+  }
+
+  .feature-card {
+    background: #FAFAFC;
+    border: 1px solid #E5DCD4;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+
+  .feature-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #1A1A1A;
+    margin-bottom: 4px;
+  }
+
+  .feature-desc {
+    font-size: 8pt;
+    color: #555555;
+    line-height: 1.45;
+  }
+
+  .footer-sig {
+    margin-top: 30px;
+    padding-top: 16px;
+    border-top: 1px dashed #E5DCD4;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    color: #8E8E93;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<!-- PAGE 1: COVER PAGE -->
+<div class="page">
+  <div class="cover">
+    <div>
+      <div class="cover-header">
+        <div class="cover-logo">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <div>
+          <span style="font-size: 11pt; font-weight: 700; color: #014BAA; letter-spacing: -0.01em;">VAULTDROP</span>
+          <span style="font-size: 8pt; font-family: 'JetBrains Mono', monospace; color: #8E8E93; display: block;">OFFICIAL ARCHITECTURAL SPECIFICATION</span>
+        </div>
+      </div>
+
+      <div style="margin-top: 50px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 9pt; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: #0071E3;">Production Master Manual</span>
+        <h1 class="brand-title">Vault<span class="brand-gradient">Drop</span></h1>
+        <p class="cover-subtitle">
+          The Definitive Architectural & Design Specification for Ephemeral Zero-Trust File Security, Apple Chromatic Aesthetics, and Cross-Platform Choreography.
+        </p>
+      </div>
+    </div>
+
+    <div>
+      <div class="cover-meta">
+        <div class="meta-item">
+          <span class="meta-label">Conceived & Directed By</span>
+          <span class="meta-value">Abhijay Chauhan</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Design Language</span>
+          <span class="meta-value">Apple Chromatic Precision v2.4</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Phonetic & Brand Standard</span>
+          <span class="meta-value">"VaultDrop" (PascalCase Strict)</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Target Architecture</span>
+          <span class="meta-value">Next.js 16 • Turbopack • PostgreSQL</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Security Protocol</span>
+          <span class="meta-value">Zero-Trace Ephemeral In-Memory TTL</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Creation Manifesto</span>
+          <span class="meta-value">"Crafted with love and cold coffee"</span>
+        </div>
+      </div>
+
+      <div class="footer-sig">
+        <span>VAULTDROP ARCHITECTURE MANUAL</span>
+        <span>OCTOBER 2026 EDITION • v1.0</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 2: VISION & BRAND PHILOSOPHY -->
+<div class="page">
+  <h1>1. Executive Vision & Foundational Philosophy</h1>
+  <p class="lead">
+    <strong>VaultDrop</strong> is born from an uncompromising conviction: public workstations, laboratory PCs, and shared terminal screens are fundamentally hostile computing environments.
+  </p>
+
+  <div class="arch-box">
+    <div class="arch-box-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#014BAA" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      The Brand Identity & Phonetics Rule
+    </div>
+    <p>
+      The system name is strictly styled and pronounced as <strong>VaultDrop</strong> (capital <em>V</em>, capital <em>D</em>). It must never be written as lowercase <em>Vaultdrop</em> or generic text. It represents the immediate, safe dropping of sensitive digital assets into an impenetrable, self-destructing vault.
+    </p>
+  </div>
+
+  <h2>The Fundamental Problem</h2>
+  <p>
+    When students, engineers, and researchers need to transfer files between their personal mobile phones and shared public computers (university labs, library kiosks, printing shops, or client conference rooms), they are forced into dangerous habits:
+  </p>
+  <ul>
+    <li>Typing their personal passwords into shared keyboards equipped with potential hardware or software keyloggers.</li>
+    <li>Leaving persistent browser cookies and active sessions stored in shared browser profiles.</li>
+    <li>Leaving files in public "Downloads" folders where subsequent users can inspect, copy, or recover them.</li>
+    <li>Plugging in USB thumb drives that can be infected with autorun firmware malware.</li>
+  </ul>
+
+  <h2>The VaultDrop Doctrine: Zero Keystrokes, Zero Trace</h2>
+  <p>
+    VaultDrop completely eliminates keystrokes on untrusted machines. Through cryptographic cross-device handoffs, dynamic SVG chromatic QR codes, and automated 24-hour file cremation, a user can stage, preview, download, and zip files without leaving a single trace of their identity or data.
+  </p>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-title">🔒 Zero-Keystroke PC Login</div>
+      <div class="feature-desc">Workstation screens display a rotating, 2-minute ephemeral cryptographic token in chromatic vector format. Smartphones scan and authorize in 250 milliseconds.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">🔥 24-Hour File Cremation</div>
+      <div class="feature-desc">Every uploaded file carries an explicit UTC expiration timestamp. Unclaimed or completed payloads are permanently purged via database triggers.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">⚡ Instant 0ms Panic Wipe</div>
+      <div class="feature-desc">Single-click or hotkey screen sanitizer that flushes auth storage, revokes signed URLs, and clears the DOM in 0 milliseconds.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">🛡️ BFCache Navigation Guard</div>
+      <div class="feature-desc">Prevents browser "Back" button attacks by detecting cached DOM reconstruction and enforcing immediate re-authentication.</div>
+    </div>
+  </div>
+
+  <div class="callout apple">
+    <strong>Abhijay Chauhan's Architectural Mandate:</strong> "Software should feel alive. It should not look like another cold, lifeless utility. Every color, every transition, and every loading frame must communicate precision, beauty, and security."
+  </div>
+</div>
+
+<!-- PAGE 3: THE APPLE CHROMATIC DESIGN SYSTEM -->
+<div class="page">
+  <h1>2. The Apple Chromatic Design System</h1>
+  <p class="lead">
+    VaultDrop adopts a custom chromatic palette inspired by Apple's highest-tier human interface craftsmanship: vibrant, balanced, high-contrast, and deeply functional.
+  </p>
+
+  <h2>The Chromatic Anchor Palette</h2>
+  <p>
+    Every color in the VaultDrop interface serves a distinct structural or psychological purpose. Gradients are mathematically distributed across key interactions to create organic visual warmth without visual clutter.
+  </p>
+
+  <div class="palette-grid">
+    <div class="color-card">
+      <div class="color-swatch" style="background: #0071E3;"></div>
+      <div class="color-details">
+        <div class="color-name">Apple Blue</div>
+        <div class="color-hex">#0071E3</div>
+        <div class="color-role">Primary Action / Focus</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #014BAA;"></div>
+      <div class="color-details">
+        <div class="color-name">Vault Deep Indigo</div>
+        <div class="color-hex">#014BAA</div>
+        <div class="color-role">Core Brand & Security</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #AF52DE;"></div>
+      <div class="color-details">
+        <div class="color-name">Apple Royal Purple</div>
+        <div class="color-hex">#AF52DE</div>
+        <div class="color-role">Encryption Gradients</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #FF2D55;"></div>
+      <div class="color-details">
+        <div class="color-name">Apple Electric Rose</div>
+        <div class="color-hex">#FF2D55</div>
+        <div class="color-role">Dynamic Accent & Pulse</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #FF9500;"></div>
+      <div class="color-details">
+        <div class="color-name">Apple Amber Gold</div>
+        <div class="color-hex">#FF9500</div>
+        <div class="color-role">Warning & TTL Glow</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #34C759;"></div>
+      <div class="color-details">
+        <div class="color-name">Emerald Security</div>
+        <div class="color-hex">#34C759</div>
+        <div class="color-role">Verified Auth / Sync</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #F8F3F0; border: 1px solid #E5DCD4;"></div>
+      <div class="color-details">
+        <div class="color-name">Alabaster Canvas</div>
+        <div class="color-hex">#F8F3F0</div>
+        <div class="color-role">Warm Background Canvas</div>
+      </div>
+    </div>
+    <div class="color-card">
+      <div class="color-swatch" style="background: #E5DCD4;"></div>
+      <div class="color-details">
+        <div class="color-name">Sand Border</div>
+        <div class="color-hex">#E5DCD4</div>
+        <div class="color-role">Structural Dividers</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Dynamic Vector SVG Chromatic QR Engine</h2>
+  <p>
+    Standard monochrome QR codes are visually jarring and break premium design cohesion. VaultDrop implements an SVG injection pipeline that transforms raw barcode matrix points into a unified chromatic gradient:
+  </p>
+  
+  <div class="arch-box">
+    <div class="arch-box-title">SVG Vector Gradient Architecture</div>
+    <p>
+      During QR generation, VaultDrop replaces standard black fills (<span class="code-pill">#000000</span>) with an integrated SVG linear gradient definition:
+    </p>
+    <pre style="background: #F8F3F0; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 7.5pt; color: #014BAA; overflow-x: auto;">
+&lt;linearGradient id="appleQrGrad" x1="0%" y1="0%" x2="100%" y2="100%"&gt;
+  &lt;stop offset="0%" stop-color="#0071E3" /&gt;
+  &lt;stop offset="25%" stop-color="#5856D6" /&gt;
+  &lt;stop offset="50%" stop-color="#AF52DE" /&gt;
+  &lt;stop offset="75%" stop-color="#FF2D55" /&gt;
+  &lt;stop offset="100%" stop-color="#FF9500" /&gt;
+&lt;/linearGradient&gt;</pre>
+    <p style="font-size: 8pt; color: #6B6B6B; margin-top: 6px;">
+      This maintains 100% ISO/IEC 18004 scanning compliance while turning security barcodes into luxury visual artifacts.
+    </p>
+  </div>
+</div>
+
+<!-- PAGE 4: THE PEACOCK LOADER & PERCEPTUAL PSYCHOLOGY -->
+<div class="page">
+  <h1>3. The Custom Peacock Loader & Temporal Psychology</h1>
+  <p class="lead">
+    In modern high-speed web apps, instantaneous state transitions can create cognitive disorientation. VaultDrop solves this with the <strong>Peacock Loader</strong> and a strictly calibrated 2-second perceptual delay guarantee.
+  </p>
+
+  <h2>The 2000ms Perceptual Minimum Guarantee</h2>
+  <p>
+    When a user submits credentials or creates a new vault, if the system authenticates in 30ms, the screen appears to jerk or flicker, leaving the user unsure whether cryptographic keys were truly initialized.
+  </p>
+  <p>
+    VaultDrop enforces an intentional <span class="code-pill">minDelay = Promise.all([auth, sleep(2000)])</span>. This guarantees that the user observes the cryptographic handoff animation. The interface feels intentional, heavy, and secure.
+  </p>
+
+  <div class="arch-box">
+    <div class="arch-box-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#014BAA" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      Peacock Kinetic Mechanics
+    </div>
+    <p>
+      The Peacock loader is engineered using pure SVG vectors and dual accelerated CSS orbital keyframes:
+    </p>
+    <ul>
+      <li><strong>Dual Accelerated Orbits:</strong> Outer and inner concentric rings rotate at 1.8s and 2.4s intervals in counter-rotation, creating a gyroscopic depth effect.</li>
+      <li><strong>Vertical Bouncing Spheres:</strong> Three central chromatic spheres bounce with sinusoidal easing curves, running at an accelerated 0.4s period with 0.1s staggered delays.</li>
+      <li><strong>Center-Shrunk Modal Frame:</strong> Unlike jarring full-screen takeovers, the Peacock loader sits within a compact, frosted glass pill in the exact center of the screen, preserving contextual spatial memory.</li>
+    </ul>
+  </div>
+
+  <h2>CSS Orbital Keyframe Definition</h2>
+  <pre style="background: #F8F3F0; padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 7.5pt; color: #1A1A1A; border: 1px solid #E5DCD4;">
+@keyframes peacockOrbital {
+  0% { transform: rotate(0deg) scale(0.96); opacity: 0.7; }
+  50% { transform: rotate(180deg) scale(1.04); opacity: 1; }
+  100% { transform: rotate(360deg) scale(0.96); opacity: 0.7; }
+}
+
+@keyframes peacockBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}</pre>
+</div>
+
+<!-- PAGE 5: RESPONSIVE DUAL-ARCHITECTURE -->
+<div class="page">
+  <h1>4. Responsive Dual-Architecture: PC vs. Smartphone</h1>
+  <p class="lead">
+    A desktop monitor in a shared computer lab and a 6-inch mobile smartphone screen serve completely different ergonomic needs. VaultDrop completely separates these two paradigms.
+  </p>
+
+  <h2>Viewport Split Matrix</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>PC Workstation Terminal</th>
+        <th>Smartphone Personal Node</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Primary Use Case</strong></td>
+        <td>Batch download, zip archive export, monitor preview</td>
+        <td>File capture, camera QR scanning, identity approval</td>
+      </tr>
+      <tr>
+        <td><strong>Gateway Screen</strong></td>
+        <td>High-resolution active QR code + 6-digit PIN code</td>
+        <td>Blurred mock QR + direct "Open Google Lens" launcher</td>
+      </tr>
+      <tr>
+        <td><strong>Navigation Bar</strong></td>
+        <td>Expanded storage meter, TTL countdown, Panic Wipe</td>
+        <td>Decluttered compact header; sub-card storage status</td>
+      </tr>
+      <tr>
+        <td><strong>File Grid / List</strong></td>
+        <td>Dense desktop table with category icons and direct actions</td>
+        <td>Thumb-friendly mobile cards with large touch targets</td>
+      </tr>
+      <tr>
+        <td><strong>Hardware Safety</strong></td>
+        <td>Assumed untrusted; 30-min idle timeout, zero local credentials</td>
+        <td>Assumed personal; persistent device identity token</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Mobile Viewport Decluttering</h2>
+  <p>
+    Earlier iterations suffered from visual overcrowding on mobile screens (timers overflowing into borders, cut-off text). VaultDrop v1.0 establishes strict mobile ergonomics:
+  </p>
+  <ul>
+    <li><strong>Decoupled Status Card:</strong> Storage meters and TTL countdowns are moved from the top navigation bar into a dedicated, high-contrast sub-header card.</li>
+    <li><strong>Horizontal Overflow Immunity:</strong> All card containers enforce <span class="code-pill">overflow-x-hidden</span> and dynamic text truncation (<span class="code-pill">truncate max-w-xs</span>).</li>
+    <li><strong>No Unnecessary Hardware Switches:</strong> Removed confusing manual "PC/Phone switches"; device form factor is detected automatically via user-agent and CSS media queries.</li>
+  </ul>
+</div>
+
+<!-- PAGE 6: BIDIRECTIONAL QR PAIRING & FALLBACK -->
+<div class="page">
+  <h1>5. Bidirectional QR Pairing & The 3-Tier Fallback</h1>
+  <p class="lead">
+    VaultDrop features a zero-configuration bidirectional hardware bridge allowing either device to authenticate the other without typing credentials.
+  </p>
+
+  <div class="arch-box">
+    <div class="arch-box-title">Scene 1: PC Logged In First (Handoff to Phone)</div>
+    <p>
+      When a user logs in on a computer first and wants to access their vault on their phone:
+    </p>
+    <ol>
+      <li>The PC dashboard displays an <strong>"Open on Smartphone"</strong> modal featuring a dynamic chromatic QR code.</li>
+      <li>On the smartphone, the user opens Google Lens or their native camera and points it at the screen.</li>
+      <li>The phone opens the URL <span class="code-pill">/pair?handoff=username&uid=id</span> and is authenticated instantly with zero keyboard inputs.</li>
+    </ol>
+  </div>
+
+  <div class="arch-box">
+    <div class="arch-box-title">Scene 2: Phone Logged In First (Handoff to PC)</div>
+    <p>
+      When a user is on their mobile phone and wants to unlock an untrusted lab PC:
+    </p>
+    <ol>
+      <li>The untrusted PC opens <span class="code-pill">/login</span> on the QR tab. It displays a real-time cryptographic pairing token.</li>
+      <li>The user points their smartphone camera at the PC screen.</li>
+      <li>The phone opens <span class="code-pill">/pair?token=...</span> and prompts: <em>"Authorize Workstation Session?"</em></li>
+      <li>Tapping <strong>Approve</strong> completes the handshake via Supabase real-time triggers. The lab PC unlocks within 400ms!</li>
+    </ol>
+  </div>
+
+  <h2>The 3-Tier Universal Fallback Matrix</h2>
+  <p>
+    What if someone does not have Google Lens installed, or has camera permissions disabled? VaultDrop provides a fail-safe, 3-tier cascade:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Fallback Mechanism</th>
+        <th>Implementation Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Tier 1 (Primary)</strong></td>
+        <td>Native Google Lens App Direct Intent</td>
+        <td>Direct Android intent launch: <span class="code-pill">intent://#Intent;package=com.google.ar.lens;end;</span>. Completely eliminates search website redirects.</td>
+      </tr>
+      <tr>
+        <td><strong>Tier 2 (Universal)</strong></td>
+        <td>Built-in iOS / Android Camera</td>
+        <td>Every modern iOS (11+) and Android (9+) camera app auto-detects QR codes natively with zero additional software.</td>
+      </tr>
+      <tr>
+        <td><strong>Tier 3 (No Camera)</strong></td>
+        <td>6-Character Workstation PIN</td>
+        <td>PC screen displays a high-visibility PIN (e.g. <span class="code-pill">B9C3F1</span>). User types 6 characters on mobile to resolve the token via <span class="code-pill">findTokenByPin()</span>.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- PAGE 7: LIVE UPLOAD PROGRESS & QUOTA -->
+<div class="page">
+  <h1>6. Live Upload Tracking & Storage Quota</h1>
+  <p class="lead">
+    Transferring files into an encrypted ephemeral vault requires clear visual confirmation. Users must never wonder whether their file is stalled or actively encrypting.
+  </p>
+
+  <h2>Live Chromatic Progress Engine</h2>
+  <p>
+    VaultDrop integrates an active progress tracking pipeline in <span class="code-pill">file-helpers.ts</span> and <span class="code-pill">DropZone.tsx</span>:
+  </p>
+  <ul>
+    <li><strong>Client Sanity Validation (0% - 15%):</strong> Verifies file size, filename constraints (1–255 characters), and checks cumulative quota before network transmission.</li>
+    <li><strong>Binary Storage Staging (15% - 70%):</strong> Streams file bytes directly to the encrypted Supabase Storage bucket with live percentage feedback.</li>
+    <li><strong>Database Metadata Registration (70% - 90%):</strong> Executes PostgreSQL row insert with strict foreign key constraints and triggers.</li>
+    <li><strong>Signed URL Generation (90% - 100%):</strong> Generates short-lived, tamper-proof 60-second download tokens.</li>
+  </ul>
+
+  <div class="arch-box">
+    <div class="arch-box-title">Visual Progress Architecture in DropZone</div>
+    <p>
+      During upload, the standard drop zone collapses smoothly into an Apple chromatic progress track:
+    </p>
+    <div style="background: #F8F3F0; border: 1px solid #E5DCD4; border-radius: 12px; padding: 12px; margin: 10px 0;">
+      <div style="display: flex; justify-content: space-between; font-size: 8pt; font-family: 'JetBrains Mono', monospace; margin-bottom: 4px;">
+        <span style="font-weight: 600; color: #1A1A1A;">quarterly_financial_report.pdf</span>
+        <span style="font-weight: 700; color: #014BAA;">72%</span>
+      </div>
+      <div style="height: 8px; width: 100%; background: #E5DCD4; border-radius: 999px; overflow: hidden;">
+        <div style="height: 100%; width: 72%; background: linear-gradient(90deg, #0071E3, #AF52DE, #FF9500); border-radius: 999px;"></div>
+      </div>
+    </div>
+    <p style="font-size: 8pt; color: #6B6B6B;">
+      Post-upload, a 2.2-second emerald confirmation banner confirms multi-device synchronization before resetting.
+    </p>
+  </div>
+
+  <h2>Strict Quota & PostgreSQL Trigger Defense</h2>
+  <p>
+    To prevent server denial-of-service, VaultDrop enforces hard architectural boundaries:
+  </p>
+  <ul>
+    <li><strong>Max Single File Size:</strong> 20 MB strictly enforced on client and bucket policy.</li>
+    <li><strong>Max Vault Account Cap:</strong> 50 MB total cumulative payload per user.</li>
+    <li><strong>Atomic Trigger Rollback:</strong> If a race condition bypasses client checks, PostgreSQL trigger <span class="code-pill">enforce_storage_quota_trigger</span> raises an exception and automatically purges the orphaned storage object.</li>
+  </ul>
+</div>
+
+<!-- PAGE 8: IN-APP CROSS-DEVICE SYNC ENGINE -->
+<div class="page">
+  <h1>7. In-App Cross-Device Sync Engine</h1>
+  <p class="lead">
+    When a file is uploaded on a PC workstation, it must appear on the user's paired smartphone instantly—without requiring a full browser page reload that disrupts active operations.
+  </p>
+
+  <h2>The Zero-Reload Refresh Engine</h2>
+  <p>
+    Earlier web paradigms relied on manual browser reloads (<span class="code-pill">window.location.reload()</span>), which reset scroll positions, trigger screen flashes, and can invalidate temporary component states. VaultDrop implements a seamless in-app data sync:
+  </p>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-title">🔄 Dedicated "Sync Vault" Button</div>
+      <div class="feature-desc">Placed directly next to the category filter chips. Triggers an asynchronous re-fetch of the file manifest with a smooth CSS spinning indicator without touching the browser tab.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">💓 8-Second Heartbeat Polling</div>
+      <div class="feature-desc">A lightweight background timer queries user file records every 8 seconds, ensuring multi-device parity while minimizing battery and network overhead.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">📱 Visibility & Focus Awareness</div>
+      <div class="feature-desc">When a user unlocks their phone or switches back to the VaultDrop browser tab, the <span class="code-pill">visibilitychange</span> event triggers an immediate silent re-sync.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title">📦 Atomic React State Reconciliation</div>
+      <div class="feature-desc">File manifests are diffed by ID; newly added items slide in smoothly with CSS entry transitions while preserving active multi-select checkboxes.</div>
+    </div>
+  </div>
+
+  <h2>State Reconciliation Flow Diagram</h2>
+  <pre style="background: #F8F3F0; padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 7.5pt; color: #014BAA; border: 1px solid #E5DCD4;">
+[PC Workstation] ── Uploads "contract.pdf" ──> [Supabase Storage & PostgreSQL]
+                                                               │
+┌──────────────────────────────────────────────────────────────┘
+▼
+[Smartphone Node]
+ ├── Event 1: Manual "Sync Vault" button tapped ────> Immediate State Update
+ ├── Event 2: User unlocks phone (visibilitychange) ─> Silent Background Sync
+ └── Event 3: Periodic Heartbeat (8s interval) ──────> Real-time Sync
+                                                               │
+                                                               ▼
+                                                  [New File Appears Instantly!]</pre>
+</div>
+
+<!-- PAGE 9: EPHEMERAL SECURITY & DEFENSE -->
+<div class="page">
+  <h1>8. Ephemeral Zero-Trace Security & Defense-in-Depth</h1>
+  <p class="lead">
+    Security in VaultDrop is not an afterthought or an optional toggle; it is the fundamental fabric of the application lifecycle.
+  </p>
+
+  <h2>1. 24-Hour File Auto-Destruction</h2>
+  <p>
+    Every file uploaded to VaultDrop is stamped with an immutable UTC expiry date 24 hours into the future. A background PostgreSQL scheduled worker evaluates:
+  </p>
+  <pre style="background: #F8F3F0; padding: 8px 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 7.5pt; color: #C8102E; border: 1px solid #E5DCD4;">
+DELETE FROM files WHERE expires_at &lt; NOW();</pre>
+  <p>
+    The corresponding storage bucket artifacts are purged automatically via bucket lifecycle policies, ensuring that forgotten files do not persist indefinitely.
+  </p>
+
+  <h2>2. 30-Minute Inactivity Session TTL</h2>
+  <p>
+    If a user walks away from a public library workstation, VaultDrop will not remain open. An idle activity tracker monitors keyboard, mouse, and touch events:
+  </p>
+  <ul>
+    <li>At 28 minutes of inactivity, a pulsing warning banner appears with a direct button to extend the session.</li>
+    <li>At 30 minutes, the session is terminated, storage keys are purged, and the browser is redirected to <span class="code-pill">/login?reason=timeout</span>.</li>
+  </ul>
+
+  <h2>3. Instant 0ms Panic Wipe with 10-Second Auto-Dismiss</h2>
+  <p>
+    In emergency situations (e.g. someone approaching the user's terminal), clicking the high-visibility red <strong>Panic</strong> button triggers an immediate emergency shutdown:
+  </p>
+  <ul>
+    <li>Session tokens, user profiles, and decryption keys are purged synchronously from memory and storage in 0 milliseconds.</li>
+    <li>The page redirects to <span class="code-pill">/login?reason=panic</span>, displaying a high-contrast emergency warning banner.</li>
+    <li>The panic notice automatically self-dismisses after exactly 10 seconds, leaving a clean, neutral login screen without leaving clues about previous activity.</li>
+  </ul>
+
+  <h2>4. BFCache (Back-Forward Cache) Defense</h2>
+  <p>
+    A notorious security vulnerability in modern browsers is the Back-Forward Cache: when a user clicks "Log Out" and walks away, an intruder can click the browser's "Back" arrow to view cached pages.
+  </p>
+  <p>
+    VaultDrop neutralizes this via the <span class="code-pill">pageshow</span> event listener. If <span class="code-pill">e.persisted</span> is detected, the authentication guard checks the active session and instantly redirects to the login screen, denying cached DOM rendering.
+  </p>
+</div>
+
+<!-- PAGE 10: CONCLUSION & ARCHITECTURAL SUMMARY -->
+<div class="page">
+  <h1>9. Architectural Synthesis & Production Deployment</h1>
+  <p class="lead">
+    VaultDrop represents the convergence of high-security ephemeral engineering and Apple-grade chromatic UI design.
+  </p>
+
+  <h2>Technology Stack Specification</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Layer</th>
+        <th>Technology</th>
+        <th>Specification / Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Frontend Framework</strong></td>
+        <td>Next.js 16.4.2 (App Router)</td>
+        <td>Server & client components, Turbopack high-speed bundler</td>
+      </tr>
+      <tr>
+        <td><strong>Runtime & Package Manager</strong></td>
+        <td>Bun 1.3.1</td>
+        <td>Zero-overhead package resolution, ultra-fast script execution</td>
+      </tr>
+      <tr>
+        <td><strong>Styling & Design System</strong></td>
+        <td>Tailwind CSS v4</td>
+        <td>Apple chromatic gradients, custom keyframe animations, glassmorphism</td>
+      </tr>
+      <tr>
+        <td><strong>Database & Storage</strong></td>
+        <td>Supabase (PostgreSQL + S3)</td>
+        <td>Row Level Security, quota triggers, time-limited signed URLs</td>
+      </tr>
+      <tr>
+        <td><strong>QR & Barcode Pipeline</strong></td>
+        <td>qrcode + Custom SVG Defs</td>
+        <td>Vector gradient injection, high error-correction level (H)</td>
+      </tr>
+      <tr>
+        <td><strong>Archive Generation</strong></td>
+        <td>JSZip 3.10.1</td>
+        <td>Client-side multi-file zip bundling with 0-keystroke download</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Summary of Creator Principles</h2>
+  <div class="callout apple">
+    <strong>From Abhijay Chauhan:</strong><br>
+    "VaultDrop is not just an application. It is a philosophy that user privacy must be beautiful, effortless, and unyielding. You should never have to surrender convenience to protect your security, and you should never have to accept ugly tools to protect your privacy."
+  </div>
+
+  <div style="margin-top: 40px; text-align: center; padding: 24px; background: #F8F3F0; border-radius: 16px; border: 1px solid #E5DCD4;">
+    <div style="font-size: 14pt; font-weight: 800; color: #014BAA; margin-bottom: 4px;">
+      Vault<span class="brand-gradient">Drop</span>
+    </div>
+    <div style="font-size: 9pt; color: #6B6B6B; font-family: 'JetBrains Mono', monospace;">
+      Created by Abhijay Chauhan • All Rights Reserved © 2026
+    </div>
+    <div style="font-size: 8.5pt; color: #8E8E93; margin-top: 6px; font-style: italic;">
+      "Crafted with love, cold coffee, and relentless dedication."
+    </div>
+  </div>
+
+  <div class="footer-sig" style="margin-top: 30px;">
+    <span>VAULTDROP ARCHITECTURAL MANUAL • END OF DOCUMENT</span>
+    <span>CONFIDENTIAL & PROPRIETARY</span>
+  </div>
+</div>
+
+</body>
+</html>

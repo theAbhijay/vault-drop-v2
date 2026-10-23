@@ -94,7 +94,8 @@ export function generateUUID(): string {
  */
 export async function uploadVaultFile(
   userId: string,
-  file: File
+  file: File,
+  onProgress?: (percent: number) => void
 ): Promise<{ success: boolean; file?: VaultFile; error?: string }> {
   // 1. Client-side sanity checks matching schema
   if (file.name.length < 1 || file.name.length > 255) {
@@ -118,6 +119,8 @@ export async function uploadVaultFile(
     return { success: false, error: 'Storage cap exceeded. Total vault usage cannot exceed 50 MB.' };
   }
 
+  onProgress?.(15);
+
   const fileId = generateUUID();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
   const category = getFileCategory(file.name, mimeType);
@@ -125,6 +128,7 @@ export async function uploadVaultFile(
   // Supabase Cloud Environment
   if (isSupabaseConfigured && supabase) {
     const storagePath = `user_${userId}/${fileId}_${file.name}`;
+    onProgress?.(35);
 
     // Upload bytes to private bucket 'vault'
     const { error: storageError } = await supabase.storage
@@ -137,6 +141,8 @@ export async function uploadVaultFile(
     if (storageError) {
       return { success: false, error: storageError.message };
     }
+
+    onProgress?.(70);
 
     // Insert metadata into database (enforce_storage_quota_trigger runs here)
     const { error: dbError } = await supabase.from('files').insert({
@@ -158,10 +164,14 @@ export async function uploadVaultFile(
       return { success: false, error: dbError.message };
     }
 
+    onProgress?.(90);
+
     // Generate short-lived signed URL (60s)
     const { data: signedUrlData } = await supabase.storage
       .from('vault')
       .createSignedUrl(storagePath, 60);
+
+    onProgress?.(100);
 
     const uploadedFile: VaultFile = {
       id: fileId,
@@ -179,6 +189,7 @@ export async function uploadVaultFile(
   }
 
   // Fallback (Local Development)
+  onProgress?.(50);
   let content: string | undefined;
   if (file.type.startsWith('text/') || ['json', 'js', 'ts', 'py', 'c', 'cpp', 'html', 'css', 'md'].includes(file.name.split('.').pop() || '')) {
     try {
@@ -188,6 +199,7 @@ export async function uploadVaultFile(
     }
   }
 
+  onProgress?.(80);
   const objectUrl = URL.createObjectURL(file);
   const newFile: VaultFile = {
     id: fileId,
@@ -211,6 +223,7 @@ export async function uploadVaultFile(
     localStorage.setItem(`${MOCK_STORAGE_FILES_PREFIX}${userId}`, JSON.stringify(metaList));
   }
 
+  onProgress?.(100);
   return { success: true, file: newFile };
 }
 

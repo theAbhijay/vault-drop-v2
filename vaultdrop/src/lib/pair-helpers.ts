@@ -85,6 +85,62 @@ export async function createPairingSession(): Promise<PairingSession> {
 }
 
 /**
+ * Look up a pairing session token by short PIN (first 6 characters of token).
+ * Allows users without Google Lens or camera access to pair instantly via PIN.
+ */
+export async function findTokenByPin(pin: string): Promise<string | null> {
+  const cleanPin = pin.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  if (cleanPin.length < 4) return null;
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('pairing_sessions')
+        .select('qr_token, expires_at, status')
+        .ilike('qr_token', `${cleanPin}%`)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        if (new Date(data.expires_at).getTime() > Date.now()) {
+          return data.qr_token;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallback (Local development)
+  if (typeof window !== 'undefined') {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(MOCK_PAIRING_PREFIX)) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try {
+            const session: PairingSession = JSON.parse(raw);
+            if (
+              session.qrToken.toLowerCase().startsWith(cleanPin) &&
+              session.status === 'pending' &&
+              new Date(session.expiresAt).getTime() > Date.now()
+            ) {
+              return session.qrToken;
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Check the status of a pairing session (polled by the lab PC).
  */
 export async function checkPairingStatus(token: string): Promise<PairingSession | null> {

@@ -11,6 +11,7 @@ interface QRLoginCardProps {
 
 export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
   const [qrSvg, setQrSvg] = useState<string>('');
+  const [pinCode, setPinCode] = useState<string>('');
   const [countdown, setCountdown] = useState<number>(120);
   const [status, setStatus] = useState<'loading' | 'waiting' | 'refreshing' | 'approved'>('loading');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -105,6 +106,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
         .replace('>', `>${gradientDef}`);
 
       setQrSvg(styledSvg);
+      setPinCode(newSession.qrToken.substring(0, 6).toUpperCase());
       expiryTimestampRef.current = Date.now() + 120 * 1000; // Reset to 2 minutes
       setCountdown(120);
       setStatus('waiting');
@@ -219,7 +221,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       </div>
 
       {/* Auto-Refresh Ticker & Manual Refresh Button */}
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-3">
         <div className="flex items-center gap-2 text-[12px] font-mono text-[#6B6B6B] bg-[#F8F3F0] px-3.5 py-1.5 rounded-full border border-[#E5DCD4]">
           <span className="w-2 h-2 rounded-full bg-[#014BAA] animate-ping" />
           <span>Auto-refreshes in {timeString}</span>
@@ -234,6 +236,16 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
           <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
       </div>
+
+      {/* 6-Character Workstation PIN (Alternative if User Has No Google Lens) */}
+      {pinCode && (
+        <div className="flex items-center gap-2 mb-3 px-3.5 py-1.5 bg-[#014BAA]/5 rounded-xl border border-[#014BAA]/20 shadow-xs">
+          <span className="text-[11px] text-[#6B6B6B] font-mono">Workstation PIN:</span>
+          <span className="font-mono font-bold text-[13px] tracking-widest text-[#014BAA]">
+            {pinCode}
+          </span>
+        </div>
+      )}
 
       {/* Instructions */}
       <div className="space-y-2 max-w-sm">
