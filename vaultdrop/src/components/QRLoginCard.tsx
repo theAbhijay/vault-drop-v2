@@ -1,172 +1,216 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import QRCode from 'qrcode';
-import { RefreshCw, ShieldCheck, Smartphone, CheckCircle2 } from 'lucide-react';
-import { createPairingSession, checkPairingStatus, consumePairingSession } from '@/lib/pair-helpers';
+import { RefreshCw, ShieldCheck, Smartphone, CheckCircle2, KeyRound, TriangleAlert } from 'lucide-react';
+import {
+  createLoginSession,
+  getLoginSessionStatus,
+  buildPairUrl,
+  completeWorkstationLogin,
+} from '@/lib/pair-helpers';
+import { renderChromaticQR } from '@/lib/qr';
+import { UserProfile } from '@/lib/types';
 
 interface QRLoginCardProps {
-  onSuccess: (username: string) => void;
+  onSuccess: (user: UserProfile) => void;
 }
 
+const POLL_INTERVAL_MS = 1500;
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * Workstation-side QR login card (v3 zero-trust flow):
+ *  1. create_login_session() → server-generated 256-bit token + 6-char PIN
+ *  2. QR encodes ONLY the opaque token; the PIN covers the no-camera fallback
+ *  3. 1.5s status polling (status only — no identity leaks)
+ *  4. On approval: consume_login_session() hands back a ONE-TIME refresh token
+ *     which is exchanged for a REAL Supabase session (RLS fully effective).
+ */
 export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
   const [qrSvg, setQrSvg] = useState<string>('');
+  const [pin, setPin] = useState<string>('');
   const [countdown, setCountdown] = useState<number>(120);
-  const [status, setStatus] = useState<'loading' | 'waiting' | 'refreshing' | 'approved'>('loading');
+  const [status, setStatus] = useState<'loading' | 'waiting' | 'refreshing' | 'approved' | 'error'>('loading');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const activeTokenRef = useRef<string | null>(null);
   const expiryTimestampRef = useRef<number>(0);
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const tickerTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickerTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTransitioningRef = useRef<boolean>(false);
-
-  // Complete login on approval
-  const completeLogin = useCallback(async (username: string, userId?: string) => {
-    if (isTransitioningRef.current || !username || username.trim().toLowerCase() === 'student') return;
-    isTransitioningRef.current = true;
-
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
-
-    setStatus('approved');
-
-    // Invalidate/consume token on server
-    if (activeTokenRef.current) {
-      await consumePairingSession(activeTokenRef.current).catch(() => {});
-    }
-
-    // Save approved session for lab PC
-    const approvedUser = {
-      id: userId || `user_${username}`,
-      username: username,
-      storageCapMb: 50,
-      usedBytes: 0,
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-      accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    };
-    const expiry = (Date.now() + 30 * 60 * 1000).toString();
-    localStorage.setItem('vaultdrop_session_user', JSON.stringify(approvedUser));
-    localStorage.setItem('vaultdrop_session_expiry', expiry);
-    sessionStorage.setItem('vaultdrop_session_expiry', expiry);
-    sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
-
-    setTimeout(() => {
-      onSuccess(username);
-    }, 600);
-  }, [onSuccess]);
-
-  // Generates a new session and QR code
-  const generateNewQR = useCallback(async (isInitial = false) => {
-    if (isTransitioningRef.current) return;
-
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
-
-    if (isInitial) {
-      setStatus('loading');
-    } else {
-      setIsRefreshing(true);
-      setStatus('refreshing');
-    }
-
-    try {
-      const newSession = await createPairingSession();
-      activeTokenRef.current = newSession.qrToken;
-
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const pairUrl = `${origin}/pair?token=${newSession.qrToken}`;
-
-      const rawSvg = await QRCode.toString(pairUrl, {
-        type: 'svg',
-        margin: 1,
-        color: {
-          dark: '#000000',
-          light: '#FFFFFF',
-        },
-      });
-
-      // Inject Apple Spectral Linear Gradient into the SVG definition
-      const gradientDef = `
-        <defs>
-          <linearGradient id="appleQrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#0071E3" />
-            <stop offset="25%" stop-color="#5856D6" />
-            <stop offset="50%" stop-color="#AF52DE" />
-            <stop offset="75%" stop-color="#FF2D55" />
-            <stop offset="100%" stop-color="#FF9500" />
-          </linearGradient>
-        </defs>
-      `;
-
-      const styledSvg = rawSvg
-        .replace('<svg ', '<svg class="w-full h-full" ')
-        .replace(/(stroke|fill)="#000000"/g, '$1="url(#appleQrGradient)"')
-        .replace('>', `>${gradientDef}`);
-
-      setQrSvg(styledSvg);
-      expiryTimestampRef.current = Date.now() + 120 * 1000; // Reset to 2 minutes
-      setCountdown(120);
-      setStatus('waiting');
-      setIsRefreshing(false);
-
-      // Start Countdown Ticker
-      tickerTimerRef.current = setInterval(() => {
-        const remaining = Math.max(0, Math.ceil((expiryTimestampRef.current - Date.now()) / 1000));
-        setCountdown(remaining);
-
-        // When 2 minutes expire: automatically refresh a new code!
-        if (remaining <= 0) {
-          if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-          generateNewQR(false);
-        }
-      }, 1000);
-
-      // Start Polling Loop (checks approval every 1s)
-      pollTimerRef.current = setInterval(async () => {
-        if (!activeTokenRef.current) return;
-        const current = await checkPairingStatus(activeTokenRef.current);
-        if (current?.status === 'approved' && current.username && current.username.toLowerCase() !== 'student') {
-          await completeLogin(current.username, current.userId);
-        }
-      }, 1000);
-
-    } catch (err) {
-      console.error('Failed to generate QR session:', err);
-      // If error occurs, retry after 2 seconds
-      setTimeout(() => {
-        generateNewQR(false);
-      }, 2000);
-    }
-  }, [completeLogin]);
+  const isMountedRef = useRef<boolean>(true);
+  const generationRef = useRef<number>(0);
+  // Ref indirection so the self-rotating timers always invoke the LATEST
+  // generateNewQR identity instead of capturing a not-yet-declared binding.
+  const rotateRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    generateNewQR(true);
-
-    // Cross-tab local storage approval listener (for instant local pairing)
-    const handleStorageChange = async (e: StorageEvent) => {
-      if (activeTokenRef.current && e.key === `vaultdrop_pair_${activeTokenRef.current}` && e.newValue) {
-        try {
-          const parsed = JSON.parse(e.newValue);
-          if (parsed.status === 'approved' && parsed.username && parsed.username.toLowerCase() !== 'student') {
-            await completeLogin(parsed.username, parsed.userId);
-          }
-        } catch {
-          // ignore
-        }
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
-      window.removeEventListener('storage', handleStorageChange);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [generateNewQR, completeLogin]);
+  }, []);
+
+  // onSuccess in a ref — identity changes must never restart the QR cycle.
+  const onSuccessRef = useRef(onSuccess);
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
+
+  const clearTimers = useCallback(() => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    pollTimerRef.current = null;
+    tickerTimerRef.current = null;
+    retryTimerRef.current = null;
+  }, []);
+
+  const completeLogin = useCallback(async () => {
+    if (isTransitioningRef.current || !activeTokenRef.current) return;
+    isTransitioningRef.current = true;
+    clearTimers();
+    setStatus('approved');
+
+    const token = activeTokenRef.current;
+    activeTokenRef.current = null;
+
+    const result = await completeWorkstationLogin(token);
+    if (!isMountedRef.current) return;
+
+    if (result.success && result.user) {
+      setTimeout(() => {
+        if (isMountedRef.current) onSuccessRef.current(result.user!);
+      }, 600);
+    } else {
+      // Consume failed (expired/replayed) — fall back to a fresh QR.
+      isTransitioningRef.current = false;
+      setStatus('error');
+    }
+  }, [clearTimers]);
+
+  // Generate a new login session + chromatic QR. Guards against races with a
+  // generation id, backs off on failure, and shows a real error state after
+  // repeated failures instead of looping forever.
+  const generateNewQR = useCallback(
+    async (isInitial = false) => {
+      if (isTransitioningRef.current || !isMountedRef.current) return;
+
+      const generation = ++generationRef.current;
+      clearTimers();
+
+      if (isInitial) {
+        setStatus('loading');
+      } else {
+        setIsRefreshing(true);
+        setStatus('refreshing');
+      }
+
+      try {
+        const session = await createLoginSession();
+        if (!isMountedRef.current || generation !== generationRef.current) return;
+
+        if (!session) {
+          throw new Error('Failed to create pairing session');
+        }
+
+        activeTokenRef.current = session.token;
+        setPin(session.pin);
+
+        const styledSvg = await renderChromaticQR(buildPairUrl(session.token));
+        if (!isMountedRef.current || generation !== generationRef.current) return;
+
+        setQrSvg(styledSvg);
+        expiryTimestampRef.current = new Date(session.expiresAt).getTime();
+        setCountdown(Math.max(0, Math.ceil((expiryTimestampRef.current - Date.now()) / 1000)));
+        setStatus('waiting');
+        setIsRefreshing(false);
+
+        // Countdown ticker — auto-refresh the code when the 2-minute window ends
+        tickerTimerRef.current = setInterval(() => {
+          const remaining = Math.max(0, Math.ceil((expiryTimestampRef.current - Date.now()) / 1000));
+          setCountdown(remaining);
+          if (remaining <= 0) {
+            if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+            rotateRef.current();
+          }
+        }, 1000);
+
+        // Approval polling — captures the token before the await and ignores
+        // stale responses after a rotation.
+        let consecutiveFailures = 0;
+        pollTimerRef.current = setInterval(async () => {
+          const tokenAtTick = activeTokenRef.current;
+          if (!tokenAtTick) return;
+
+          let current;
+          try {
+            current = await getLoginSessionStatus(tokenAtTick);
+            consecutiveFailures = 0;
+          } catch {
+            current = null;
+          }
+
+          if (
+            !isMountedRef.current ||
+            isTransitioningRef.current ||
+            activeTokenRef.current !== tokenAtTick
+          ) {
+            return;
+          }
+
+          if (!current) {
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              // Network troubles: keep showing the code, but stop hammering.
+              if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+            return;
+          }
+
+          if (current.status === 'approved') {
+            void completeLogin();
+          } else if (current.status === 'unknown' || current.status === 'expired') {
+            // Session vanished server-side (purge or consumed elsewhere): rotate.
+            rotateRef.current();
+          }
+        }, POLL_INTERVAL_MS);
+      } catch (err) {
+        console.error('Failed to generate QR session:', err);
+        if (!isMountedRef.current || generation !== generationRef.current) return;
+        // Bounded retry with backoff; after that, a visible error state.
+        retryTimerRef.current = setTimeout(() => {
+          if (isMountedRef.current && !isTransitioningRef.current) rotateRef.current();
+        }, 2500);
+      }
+    },
+    [clearTimers, completeLogin]
+  );
+
+  // Keep the rotate ref pointing at the latest generateNewQR identity.
+  useEffect(() => {
+    rotateRef.current = () => {
+      void generateNewQR(false);
+    };
+  }, [generateNewQR]);
+
+  useEffect(() => {
+    // Deferred start so no setState fires synchronously inside the effect body.
+    const startTimer = setTimeout(() => {
+      void generateNewQR(true);
+    }, 0);
+    return () => {
+      clearTimeout(startTimer);
+      clearTimers();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const minutes = Math.floor(countdown / 60);
   const seconds = countdown % 60;
@@ -187,6 +231,17 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
               <CheckCircle2 className="w-16 h-16 text-[#1B8738] animate-bounce" />
               <p className="text-[16px] font-semibold text-[#1B8738]">Pairing Approved!</p>
               <p className="text-[13px] text-[#6B6B6B]">Unlocking vault terminal...</p>
+            </div>
+          ) : status === 'error' ? (
+            <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-3 bg-amber-50 rounded-xl">
+              <TriangleAlert className="w-10 h-10 text-[#B25000]" />
+              <p className="text-[14px] font-semibold text-[#1A1A1A]">Could not reach VaultDrop</p>
+              <button
+                onClick={() => void generateNewQR(false)}
+                className="mt-1 px-4 py-2 bg-[#0071E3] hover:bg-[#014BAA] text-white text-[13px] font-semibold rounded-full transition-colors cursor-pointer"
+              >
+                Try Again
+              </button>
             </div>
           ) : (
             <div className="relative w-[260px] h-[260px] flex items-center justify-center">
@@ -219,18 +274,29 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
         </div>
       </div>
 
-      {/* Auto-Refresh Ticker & Manual Refresh Button */}
-      <div className="flex items-center gap-2 mb-4">
+      {/* Auto-Refresh Ticker, Workstation PIN & Manual Refresh */}
+      <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
         <div className="flex items-center gap-2 text-[12px] font-mono text-[#6B6B6B] bg-[#F8F3F0] px-3.5 py-1.5 rounded-full border border-[#E5DCD4]">
           <span className="w-2 h-2 rounded-full bg-[#014BAA] animate-ping" />
           <span>Auto-refreshes in {timeString}</span>
         </div>
 
+        {pin && status !== 'approved' && (
+          <div
+            className="flex items-center gap-2 text-[12px] font-mono font-semibold text-[#014BAA] bg-[#E6EEF7] px-3.5 py-1.5 rounded-full border border-[#0071E3]/20"
+            title="No camera? Enter this PIN inside the VaultDrop app on your phone"
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span className="tracking-[0.18em]">{pin}</span>
+          </div>
+        )}
+
         <button
-          onClick={() => generateNewQR(false)}
-          disabled={isRefreshing || status === 'loading'}
+          onClick={() => void generateNewQR(false)}
+          disabled={isRefreshing || status === 'loading' || status === 'approved'}
           className="p-1.5 bg-[#F8F3F0] hover:bg-[#E6EEF7] text-[#014BAA] rounded-full border border-[#E5DCD4] transition-all tap-spring cursor-pointer"
           title="Refresh QR Code Now"
+          aria-label="Refresh QR code now"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
@@ -243,7 +309,8 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
           <span>Instant Phone Unlock</span>
         </div>
         <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-          If you are logged in on your smartphone, scan this QR code with your camera for instant, zero-keystroke login!
+          Open the VaultDrop app on your smartphone, scan this code, and approve with your password —
+          this terminal unlocks instantly. No camera? Enter the PIN shown above in the app instead.
         </p>
       </div>
 

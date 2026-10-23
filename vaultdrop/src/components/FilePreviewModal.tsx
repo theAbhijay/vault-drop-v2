@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { X, Download, FileText, Code, FileArchive, File as FileIcon, ExternalLink } from 'lucide-react';
 import { VaultFile } from '@/lib/types';
 import { formatBytes } from '@/lib/file-helpers';
@@ -12,19 +12,46 @@ interface FilePreviewModalProps {
 }
 
 export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModalProps) {
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const downloadButtonRef = useRef<HTMLButtonElement | null>(null);
+
   useEffect(() => {
+    if (!file) return;
+
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    document.body.dataset.vaultdropModalOpen = String(
+      (Number(document.body.dataset.vaultdropModalOpen) || 0) + 1
+    );
+    downloadButtonRef.current?.focus?.();
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    window.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      const openCount = Number(document.body.dataset.vaultdropModalOpen || 1) - 1;
+      if (openCount <= 0) delete document.body.dataset.vaultdropModalOpen;
+      else document.body.dataset.vaultdropModalOpen = String(openCount);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [file, onClose]);
 
   if (!file) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div 
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Preview of ${file.name}`}
         className="relative w-full max-w-3xl bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
@@ -44,6 +71,7 @@ export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModal
 
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
+              ref={downloadButtonRef}
               onClick={() => onDownload(file)}
               className="p-2 sm:px-3 sm:py-2 text-[#014BAA] hover:bg-[#014BAA]/10 rounded-xl transition-all tap-spring cursor-pointer flex items-center gap-1.5 text-[13px] font-semibold"
             >
@@ -52,6 +80,7 @@ export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModal
             </button>
             <button
               onClick={onClose}
+              aria-label="Close preview"
               className="p-2 text-[#6B6B6B] hover:text-[#1A1A1A] hover:bg-black/5 rounded-xl transition-colors tap-spring cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -72,6 +101,8 @@ export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModal
             <iframe
               src={file.url}
               title={file.name}
+              // Sandboxed: user-supplied content can never script the app origin.
+              sandbox="allow-same-origin"
               className="w-full h-[60vh] rounded-xl border border-[#E5DCD4]"
             />
           ) : (file.category === 'code' || file.category === 'doc') && file.content ? (

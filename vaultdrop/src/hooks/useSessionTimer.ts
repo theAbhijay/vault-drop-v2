@@ -13,72 +13,80 @@ interface UseSessionTimerOptions {
   enabled?: boolean;
 }
 
+/**
+ * Hard wall-clock session expiry (30 min), stored in sessionStorage ONLY.
+ *
+ * The tick always reads the CURRENT stored expiry — never a stale closure
+ * value — so `extendSession` (same tab or another tab via the storage event)
+ * takes effect on the very next second.
+ */
 export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOptions) {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(SESSION_DURATION_SECONDS);
   const [isWarning, setIsWarning] = useState<boolean>(false);
   const timeoutFiredRef = useRef<boolean>(false);
-  const lastHeartbeatRef = useRef<number>(0);
+
+  // Keep the callback in a ref so identity changes never re-run the effect
+  // (and never reset the countdown).
+  const onTimeoutRef = useRef(onTimeout);
+  useEffect(() => {
+    onTimeoutRef.current = onTimeout;
+  }, [onTimeout]);
+
+  const readStoredExpiry = useCallback((): number | null => {
+    if (typeof window === 'undefined') return null;
+    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = parseInt(stored, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, []);
+
+  const writeStoredExpiry = useCallback((value: number) => {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(SESSION_STORAGE_KEY, value.toString());
+  }, []);
 
   // Extend or initialize the session
   const extendSession = useCallback(() => {
     const newExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SESSION_STORAGE_KEY, newExpiry.toString());
-      sessionStorage.setItem(SESSION_STORAGE_KEY, newExpiry.toString());
-    }
+    writeStoredExpiry(newExpiry);
     setSecondsRemaining(SESSION_DURATION_SECONDS);
     setIsWarning(false);
     timeoutFiredRef.current = false;
-    lastHeartbeatRef.current = Date.now();
-  }, []);
+  }, [writeStoredExpiry]);
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
 
     timeoutFiredRef.current = false;
 
-    // Check existing expiry or initialize once
-    let stored = localStorage.getItem(SESSION_STORAGE_KEY) || sessionStorage.getItem(SESSION_STORAGE_KEY);
-    let targetExpiry: number;
-
-    if (stored) {
-      const parsed = parseInt(stored, 10);
-      if (!isNaN(parsed)) {
-        if (parsed <= Date.now()) {
-          // ALREADY EXPIRED! Terminate session immediately
-          localStorage.removeItem(SESSION_STORAGE_KEY);
-          sessionStorage.removeItem(SESSION_STORAGE_KEY);
-          timeoutFiredRef.current = true;
-          onTimeout();
-          return;
-        }
-        targetExpiry = parsed;
-      } else {
-        targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
-        localStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
-        sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
-      }
-    } else {
-      targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
-      localStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
-      sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
+    // Initialize if missing; inherit if already running (e.g. refresh in tab)
+    if (readStoredExpiry() === null) {
+      writeStoredExpiry(Date.now() + SESSION_DURATION_SECONDS * 1000);
     }
 
-    const checkAndTick = () => {
-      const now = Date.now();
-      lastHeartbeatRef.current = now;
+    const fireTimeout = () => {
+      if (timeoutFiredRef.current) return;
+      timeoutFiredRef.current = true;
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      onTimeoutRef.current();
+    };
 
-      const diffSeconds = Math.floor((targetExpiry - now) / 1000);
+    // ALWAYS read the live stored value — extendSession (any tab) applies next tick.
+    const checkAndTick = () => {
+      const target = readStoredExpiry();
+
+      if (target === null) {
+        // Another context cleared the session (logout/panic in this tab's storage)
+        fireTimeout();
+        return;
+      }
+
+      const diffSeconds = Math.floor((target - Date.now()) / 1000);
 
       if (diffSeconds <= 0) {
         setSecondsRemaining(0);
         setIsWarning(false);
-        if (!timeoutFiredRef.current) {
-          timeoutFiredRef.current = true;
-          localStorage.removeItem(SESSION_STORAGE_KEY);
-          sessionStorage.removeItem(SESSION_STORAGE_KEY);
-          onTimeout();
-        }
+        fireTimeout();
         return;
       }
 
@@ -86,51 +94,33 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
       setIsWarning(diffSeconds <= WARNING_THRESHOLD_SECONDS);
     };
 
-    // Immediate initial check
     checkAndTick();
-
-    // High-frequency tick interval
     const interval = setInterval(checkAndTick, 1000);
 
-    // Sleep / Tab Switch Handler: detects if laptop slept or tab was backgrounded for > 5s
-    const handleVisibilityOrFocus = () => {
-      const now = Date.now();
-      const currentStored = localStorage.getItem(SESSION_STORAGE_KEY) || sessionStorage.getItem(SESSION_STORAGE_KEY);
-      if (currentStored) {
-        const parsed = parseInt(currentStored, 10);
-        if (parsed <= now) {
-          // User was away / laptop was in sleep mode!
-          localStorage.removeItem(SESSION_STORAGE_KEY);
-          sessionStorage.removeItem(SESSION_STORAGE_KEY);
-          if (!timeoutFiredRef.current) {
-            timeoutFiredRef.current = true;
-            onTimeout();
-          }
-          return;
-        }
-        targetExpiry = parsed;
-      }
-      checkAndTick();
+    // Cross-tab sync: another tab extending/clearing updates this tab instantly.
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === SESSION_STORAGE_KEY || e.key === null) checkAndTick();
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    window.addEventListener('focus', handleVisibilityOrFocus);
-
-    // BFCache / History Navigation listener: prevents back button from reviving old session
+    // Sleep / tab switch / BFCache revival: re-read storage immediately.
+    const handleResurface = () => checkAndTick();
     const handlePageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) {
-        handleVisibilityOrFocus();
-      }
+      if (e.persisted) checkAndTick();
     };
+
+    window.addEventListener('storage', handleStorageChange);
+    document.addEventListener('visibilitychange', handleResurface);
+    window.addEventListener('focus', handleResurface);
     window.addEventListener('pageshow', handlePageShow);
 
     return () => {
       clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('storage', handleStorageChange);
+      document.removeEventListener('visibilitychange', handleResurface);
+      window.removeEventListener('focus', handleResurface);
       window.removeEventListener('pageshow', handlePageShow);
     };
-  }, [enabled, onTimeout]);
+  }, [enabled, readStoredExpiry, writeStoredExpiry]);
 
   return {
     secondsRemaining,

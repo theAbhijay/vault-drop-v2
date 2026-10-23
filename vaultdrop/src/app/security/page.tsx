@@ -2,20 +2,14 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { 
-  Shield, 
-  ShieldCheck, 
-  Lock, 
-  Flame, 
-  Clock, 
-  QrCode, 
-  HardDrive, 
-  AlertTriangle, 
-  ArrowLeft, 
-  CheckCircle2, 
-  EyeOff, 
-  KeyRound,
-  FileText
+import {
+  Shield,
+  ShieldCheck,
+  Flame,
+  Clock,
+  QrCode,
+  HardDrive,
+  ArrowLeft,
 } from 'lucide-react';
 import { AppleColorText } from '@/components/AppleColorText';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
@@ -66,7 +60,7 @@ export default function SecurityPage() {
             Security Engineered for <AppleColorText text="Shared Terminals." mode="chars" />
           </h1>
           <p className="text-[14px] sm:text-[15px] text-[#6B6B6B] max-w-2xl mx-auto leading-relaxed">
-            Public university labs and cyber terminals are inherently hostile environments. VaultDrop was engineered with mathematical guarantees to eliminate keyloggers, session persistence, and data leakage.
+            Public university labs and cyber terminals are inherently hostile environments. VaultDrop&apos;s zero-trust architecture eliminates keystrokes on shared hardware, never persists credentials to disk, and enforces every lifetime limit server-side in PostgreSQL.
           </p>
         </div>
 
@@ -114,10 +108,10 @@ export default function SecurityPage() {
                   <span className="text-[14px] font-bold text-[#014BAA]">VaultDrop Ephemeral Vault</span>
                   <span className="px-2 py-0.5 bg-[#014BAA]/10 text-[#014BAA] text-[10px] font-bold rounded-full font-mono">RECOMMENDED</span>
                 </div>
-                <p className="text-[12px] text-[#1A1A1A]">Zero keystrokes on lab hardware. Files self-destruct in 24 hours. Instant Panic Wipe with 0ms memory erasure.</p>
+                <p className="text-[12px] text-[#1A1A1A]">Zero keystrokes on lab hardware. Sessions live only in tab-scoped storage. Files self-destruct in 24 hours. One-press Panic Wipe.</p>
               </div>
               <span className="px-3 py-1 bg-emerald-100 text-[#1B8738] text-[11px] font-mono font-bold rounded-full border border-emerald-300 self-start sm:self-auto flex-shrink-0">
-                Zero Attack Surface
+                Minimized Attack Surface
               </span>
             </div>
           </div>
@@ -151,7 +145,7 @@ export default function SecurityPage() {
             </div>
             <h4 className="text-[15px] font-bold text-[#1A1A1A]">Esc 3x Panic Incinerator</h4>
             <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-              Pressing <kbd className="px-1.5 py-0.5 bg-black/5 rounded text-[11px] font-mono font-bold">Escape</kbd> three times in rapid succession instantly purges memory, invalidates JWT tokens, and navigates away in 0ms.
+              Pressing <kbd className="px-1.5 py-0.5 bg-black/5 rounded text-[11px] font-mono font-bold">Escape</kbd> three times in rapid succession immediately revokes the server session, clears all tab-scoped storage, and navigates away.
             </p>
           </div>
 

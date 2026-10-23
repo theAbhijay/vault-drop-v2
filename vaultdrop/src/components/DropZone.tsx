@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { UploadCloud, FileUp, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 interface DropZoneProps {
@@ -16,13 +16,29 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
   const [currentFileName, setCurrentFileName] = useState<string>('');
   const [uploadComplete, setUploadComplete] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragDepthRef = useRef<number>(0);
+
+  // Never let a stale reset timer wipe the progress of a NEW upload.
+  const clearResetTimer = useCallback(() => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearResetTimer, [clearResetTimer]);
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
+
+      clearResetTimer();
       setUploadError(null);
       setIsUploading(true);
       setUploadComplete(false);
+
+      let uploadedCount = 0;
 
       try {
         for (let i = 0; i < files.length; i++) {
@@ -39,15 +55,19 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
             setUploadProgress(percent);
           });
 
+          uploadedCount += 1;
           setUploadProgress(100);
         }
 
-        setUploadComplete(true);
-        setTimeout(() => {
-          setUploadComplete(false);
-          setUploadProgress(0);
-          setCurrentFileName('');
-        }, 2200);
+        // Success screen only when at least one file actually uploaded.
+        if (uploadedCount > 0) {
+          setUploadComplete(true);
+          resetTimerRef.current = setTimeout(() => {
+            setUploadComplete(false);
+            setUploadProgress(0);
+            setCurrentFileName('');
+          }, 2200);
+        }
       } catch (err: unknown) {
         if (err instanceof Error) {
           setUploadError(err.message);
@@ -58,7 +78,7 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
         setIsUploading(false);
       }
     },
-    [onFileUpload]
+    [onFileUpload, clearResetTimer]
   );
 
   const onDragOver = (e: React.DragEvent) => {
@@ -67,18 +87,39 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
     if (!disabled && !isUploading) setIsDragOver(true);
   };
 
+  // Counter-based enter/leave: crossing child elements no longer flickers the state.
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    if (!disabled && !isUploading) setIsDragOver(true);
+  };
+
   const onDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragOver(false);
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOver(false);
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    dragDepthRef.current = 0;
     setIsDragOver(false);
     if (!disabled && !isUploading && e.dataTransfer.files) {
       handleFiles(e.dataTransfer.files);
+    }
+  };
+
+  const openFileBrowser = () => {
+    if (!disabled && !isUploading) fileInputRef.current?.click();
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openFileBrowser();
     }
   };
 
@@ -90,15 +131,24 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
         multiple
         disabled={disabled || isUploading}
         className="hidden"
-        onChange={(e) => handleFiles(e.target.files)}
+        onChange={(e) => {
+          handleFiles(e.target.files);
+          e.target.value = ''; // allow re-selecting the same file
+        }}
       />
 
       <div
+        role="button"
+        tabIndex={disabled || isUploading ? -1 : 0}
+        aria-label="Upload files to your vault"
+        aria-disabled={disabled || isUploading}
         onDragOver={onDragOver}
+        onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={() => !disabled && !isUploading && fileInputRef.current?.click()}
-        className={`relative w-full rounded-3xl border-2 border-dashed p-4 sm:p-8 transition-all duration-200 text-center flex flex-col items-center justify-center ${
+        onClick={openFileBrowser}
+        onKeyDown={onKeyDown}
+        className={`relative w-full rounded-3xl border-2 border-dashed p-4 sm:p-8 transition-all duration-200 text-center flex flex-col items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3] ${
           isUploading
             ? 'border-[#014BAA] bg-[#014BAA]/5 cursor-default'
             : isDragOver
@@ -116,7 +166,7 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
             <h3 className="text-[16px] sm:text-[17px] font-bold text-[#1A1A1A] tracking-tight">
               Uploading Payload into Vault
             </h3>
-            
+
             <p className="text-[12px] font-mono text-[#6B6B6B] mt-0.5 truncate max-w-xs sm:max-w-sm">
               {currentFileName || 'Processing payload...'}
             </p>
@@ -124,11 +174,18 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
             {/* Apple Chromatic Progress Bar */}
             <div className="w-full mt-4 space-y-1.5">
               <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-[#6B6B6B] font-medium">Staging & Encrypting</span>
+                <span className="text-[#6B6B6B] font-medium">Streaming to Encrypted Storage</span>
                 <span className="font-bold text-[#014BAA]">{Math.round(uploadProgress)}%</span>
               </div>
-              
-              <div className="w-full h-3 bg-[#E5DCD4]/70 rounded-full overflow-hidden p-0.5 shadow-inner">
+
+              <div
+                className="w-full h-3 bg-[#E5DCD4]/70 rounded-full overflow-hidden p-0.5 shadow-inner"
+                role="progressbar"
+                aria-valuenow={Math.round(uploadProgress)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Uploading ${currentFileName}`}
+              >
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-[#0071E3] via-[#AF52DE] to-[#FF9500] transition-all duration-300 ease-out shadow-xs"
                   style={{ width: `${Math.max(6, Math.min(100, uploadProgress))}%` }}
@@ -146,12 +203,8 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
             <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mb-2 shadow-sm">
               <CheckCircle2 className="w-6 h-6" />
             </div>
-            <h3 className="text-[16px] font-bold text-[#1A1A1A]">
-              Payload Successfully Encrypted & Saved
-            </h3>
-            <p className="text-[12px] text-emerald-600 font-mono mt-0.5">
-              Synced across all paired devices
-            </p>
+            <h3 className="text-[16px] font-bold text-[#1A1A1A]">Payload Secured in Vault</h3>
+            <p className="text-[12px] text-emerald-600 font-mono mt-0.5">Synced across all paired devices</p>
           </div>
         ) : (
           /* Standard Idle Drop View */

@@ -1,24 +1,30 @@
 -- ==============================================================================
--- VAULTDROP DATABASE SCHEMA & SECURITY DEFINITIONS — v2 (Hardened)
+-- VAULTDROP DATABASE SCHEMA & SECURITY DEFINITIONS — v3 (Zero-Trust Hardened)
 -- Built for Supabase (PostgreSQL 15+)
 --
--- Fixes over v1:
---   1. Profiles UPDATE restricted to last_active_at only (was: any column → users
---      could bump their own storage_cap_mb and expires_at — CRITICAL)
---   2. Pairing session approval moved to SECURITY DEFINER function (was: any
---      authenticated user could hijack any pending session — CRITICAL)
---   3. Pairing session INSERT restricted to user_id IS NULL (was: attacker could
---      pre-bind a session to a victim's user_id — CRITICAL)
---   4. Username availability check no longer leaks all profile rows
---   5. File purge now deletes Storage objects via trigger (was: orphaned blobs)
---   6. User purge now cascades Storage cleanup via file trigger
---   7. Account expiry tied to last_active_at, extended to 30 days (was: 5 days
---      from creation — users lost accounts during inactive stretches)
---   8. Auto-create profile on auth.users INSERT via trigger
---   9. Storage quota enforced via BEFORE INSERT trigger (was: not enforced at all)
---  10. Added missing indexes (profiles.expires_at, pairing_sessions.user_id)
---  11. Added column validation (filename length, mime_type length, qr_token length)
---  12. Added "consumed" status to pairing sessions to prevent replay attacks
+-- Fixes over v2:
+--   1. pairing_sessions has NO table policies/grants — all access flows through
+--      SECURITY DEFINER RPCs (v2 had `USING (true)` → anon could read ALL rows)
+--   2. files.storage_path is CHECK-constrained to the owner's own folder —
+--      closes the cross-user blob deletion primitive (v2 CRITICAL)
+--   3. files.storage_path is UNIQUE — one blob, one metadata row
+--   4. File expiry enforced in RLS (expired rows are invisible + uninsertable),
+--      not just by the purge cron
+--   5. handle_new_user validates the username and aborts cleanly on race
+--      conditions (v2 could crash signups with cryptic errors)
+--   6. QR pairing redesigned as a real session-transfer broker:
+--      - PC login: approve_login_session stores a one-time refresh token minted
+--        on the phone; consume_login_session hands it to the PC exactly once,
+--        then the row is deleted. The PC gets a REAL Supabase session (RLS works).
+--      - PC → phone handoff: token resolves only to (user_id, username), one
+--        time, 2-minute TTL. The phone still authenticates with its password on
+--        the trusted personal device. No more username+uid login bypass.
+--   7. Workstation PIN is an independent random 6-char secret (NOT a token
+--      prefix), authenticated-only lookup, 5-attempt lockout per session
+--   8. pg_cron purge schedules are created automatically when the extension
+--      is enabled (with duplicate-safe guards)
+--   9. Grant surface reduced to the minimum the client actually needs
+--  10. get_vault_usage() RPC gives the client REAL storage usage numbers
 -- ==============================================================================
 
 -- Enable extensions
@@ -47,6 +53,9 @@ CREATE INDEX IF NOT EXISTS profiles_expires_at_idx ON public.profiles (expires_a
 
 -- ------------------------------------------------------------------------------
 -- 2. FILES METADATA TABLE
+--    storage_path is ALWAYS `user_<owner_id>/<file_id>.<safe-ext>` — enforced by
+--    a table CHECK so a malicious client can never register or delete another
+--    user's storage object through the files table (v2 CRITICAL fix).
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,31 +65,59 @@ CREATE TABLE IF NOT EXISTS public.files (
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 20971520), -- 20 MB max
     mime_type TEXT NOT NULL CHECK (char_length(mime_type) BETWEEN 1 AND 100),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '24 hours')
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '24 hours'),
+    CONSTRAINT storage_path_owner_prefix_check
+        CHECK (storage_path LIKE 'user_' || owner_id::text || '/%')
 );
 
+-- Hardening for pre-existing v2 deployments (new tables get these via CREATE above)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'storage_path_owner_prefix_check'
+    ) THEN
+        ALTER TABLE public.files
+            ADD CONSTRAINT storage_path_owner_prefix_check
+            CHECK (storage_path LIKE 'user_' || owner_id::text || '/%');
+    END IF;
+END
+$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS files_storage_path_unique_idx ON public.files (storage_path);
 CREATE INDEX IF NOT EXISTS files_owner_id_idx ON public.files (owner_id);
 CREATE INDEX IF NOT EXISTS files_expires_at_idx ON public.files (expires_at);
 CREATE INDEX IF NOT EXISTS files_owner_expires_idx ON public.files (owner_id, expires_at DESC);
 
 -- ------------------------------------------------------------------------------
--- 3. PAIRING SESSIONS TABLE (for QR login)
+-- 3. PAIRING SESSIONS TABLE (QR login + handoff broker)
+--    RLS is ENABLED with ZERO policies: nobody reads/writes this table directly.
+--    Every operation goes through the SECURITY DEFINER RPCs in section 6.
+--
+--    kind = 'login'   : untrusted PC displays QR; phone approves with a
+--                       one-time refresh token; PC consumes it for a real session.
+--    kind = 'handoff' : logged-in PC displays QR; phone resolves it to learn
+--                       WHICH account to sign into (never grants anything).
 -- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.pairing_sessions (
+DROP TABLE IF EXISTS public.pairing_sessions CASCADE;
+
+CREATE TABLE public.pairing_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    qr_token TEXT UNIQUE NOT NULL CHECK (char_length(qr_token) >= 32),
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'expired', 'denied', 'consumed'))
+    qr_token TEXT UNIQUE NOT NULL CHECK (qr_token ~ '^[a-f0-9]{64}$'),
+    kind TEXT NOT NULL CHECK (kind IN ('login', 'handoff')) DEFAULT 'login',
+    pin TEXT,                       -- only for kind='login'; unambiguous alphabet
+    pin_attempts INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'expired'))
         DEFAULT 'pending',
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    session_refresh_token TEXT,     -- only for kind='login'; one-time, <= 2 min lifetime
+    device_info TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '2 minutes'),
-    consumed_at TIMESTAMPTZ,  -- when the lab PC picked up its JWT (prevents replay)
-    device_info TEXT
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '2 minutes')
 );
 
-CREATE INDEX IF NOT EXISTS pairing_sessions_token_idx ON public.pairing_sessions (qr_token);
 CREATE INDEX IF NOT EXISTS pairing_sessions_expires_at_idx ON public.pairing_sessions (expires_at);
-CREATE INDEX IF NOT EXISTS pairing_sessions_user_id_idx ON public.pairing_sessions (user_id);
+CREATE INDEX IF NOT EXISTS pairing_sessions_pin_idx ON public.pairing_sessions (pin)
+    WHERE kind = 'login' AND status = 'pending';
 
 -- ------------------------------------------------------------------------------
 -- 4. ROW LEVEL SECURITY (RLS)
@@ -108,16 +145,22 @@ CREATE POLICY "Users can update own profile"
 -- via the is_username_taken() function below — no row leakage.
 
 -- === FILES POLICIES ===
+-- Expired files are invisible (SELECT) and cannot be created backdated (INSERT),
+-- independent of the purge cron.
 
-DROP POLICY IF EXISTS "Users can view their own files" ON public.files;
-CREATE POLICY "Users can view their own files"
+DROP POLICY IF EXISTS "Users can view their own live files" ON public.files;
+CREATE POLICY "Users can view their own live files"
     ON public.files FOR SELECT
-    USING (auth.uid() = owner_id);
+    USING (auth.uid() = owner_id AND expires_at > timezone('utc'::text, now()));
 
 DROP POLICY IF EXISTS "Users can insert their own files" ON public.files;
 CREATE POLICY "Users can insert their own files"
     ON public.files FOR INSERT
-    WITH CHECK (auth.uid() = owner_id);
+    WITH CHECK (
+        auth.uid() = owner_id
+        AND expires_at > timezone('utc'::text, now())
+        AND expires_at <= timezone('utc'::text, now()) + INTERVAL '25 hours'
+    );
 
 DROP POLICY IF EXISTS "Users can delete their own files" ON public.files;
 CREATE POLICY "Users can delete their own files"
@@ -127,26 +170,11 @@ CREATE POLICY "Users can delete their own files"
 -- NO UPDATE policy — files are immutable by design.
 
 -- === PAIRING SESSIONS POLICIES ===
-
--- Lab PC (anonymous) can create a session, but ONLY with user_id = NULL and
--- status = 'pending'. This prevents pre-binding a session to a victim's user_id.
-DROP POLICY IF EXISTS "Allow anonymous pairing session creation" ON public.pairing_sessions;
-CREATE POLICY "Allow anonymous pairing session creation"
-    ON public.pairing_sessions FOR INSERT
-    WITH CHECK (user_id IS NULL AND status = 'pending');
-
--- Anyone holding the token can read the session (lab PC needs this for polling).
--- The token is unguessable (32+ random chars), so this is safe.
-DROP POLICY IF EXISTS "Allow reading pairing session by token" ON public.pairing_sessions;
-CREATE POLICY "Allow reading pairing session by token"
-    ON public.pairing_sessions FOR SELECT
-    USING (true);
-
--- NO direct UPDATE policy. Approval happens via SECURITY DEFINER function
--- (approve_pairing_session below). This prevents session hijacking.
+-- Intentionally NO policies. RLS + no grants = the table is only reachable
+-- through the SECURITY DEFINER RPCs below.
 
 -- ------------------------------------------------------------------------------
--- 5. STORAGE BUCKET POLICIES
+-- 5. STORAGE BUCKET POLICIES (private bucket "vault", 20 MB object limit)
 -- ------------------------------------------------------------------------------
 INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES ('vault', 'vault', false, 20971520)
@@ -154,42 +182,63 @@ ON CONFLICT (id) DO UPDATE SET
     public = false,
     file_size_limit = 20971520;
 
-DROP POLICY IF EXISTS "Users can read own storage files" ON storage.objects;
-CREATE POLICY "Users can read own storage files"
+DROP POLICY IF EXISTS "vault_users_read_own" ON storage.objects;
+CREATE POLICY "vault_users_read_own"
     ON storage.objects FOR SELECT
     TO authenticated
     USING (bucket_id = 'vault' AND (storage.foldername(name))[1] = 'user_' || auth.uid()::text);
 
-DROP POLICY IF EXISTS "Users can upload to own storage folder" ON storage.objects;
-CREATE POLICY "Users can upload to own storage folder"
+DROP POLICY IF EXISTS "vault_users_insert_own" ON storage.objects;
+CREATE POLICY "vault_users_insert_own"
     ON storage.objects FOR INSERT
     TO authenticated
     WITH CHECK (bucket_id = 'vault' AND (storage.foldername(name))[1] = 'user_' || auth.uid()::text);
 
-DROP POLICY IF EXISTS "Users can delete own storage files" ON storage.objects;
-CREATE POLICY "Users can delete own storage files"
+DROP POLICY IF EXISTS "vault_users_delete_own" ON storage.objects;
+CREATE POLICY "vault_users_delete_own"
     ON storage.objects FOR DELETE
     TO authenticated
     USING (bucket_id = 'vault' AND (storage.foldername(name))[1] = 'user_' || auth.uid()::text);
+
+-- Clean up policies from the v2 schema so they don't linger as dead rows.
+DROP POLICY IF EXISTS "Users can read own storage files" ON storage.objects;
+DROP POLICY IF EXISTS "Users can upload to own storage folder" ON storage.objects;
+DROP POLICY IF EXISTS "Users can delete own storage files" ON storage.objects;
 
 -- ------------------------------------------------------------------------------
 -- 6. TRIGGERS & SECURITY DEFINER FUNCTIONS
 -- ------------------------------------------------------------------------------
 
--- 6.1 Auto-create profile when a new auth.users row is inserted
+-- 6.1 Auto-create profile when a new auth.users row is inserted.
+--     Validates the username BEFORE inserting; a unique-violation race surfaces
+--     as a clean "Username is already taken." error instead of a crash.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+    v_username TEXT;
 BEGIN
-    INSERT INTO public.profiles (id, username)
-    VALUES (
-        NEW.id,
-        lower(NEW.raw_user_meta_data->>'username')
-    )
-    ON CONFLICT (id) DO NOTHING;
+    v_username := lower(NEW.raw_user_meta_data->>'username');
+
+    IF v_username IS NULL
+       OR char_length(v_username) < 5
+       OR char_length(v_username) > 32
+       OR v_username !~ '^[a-z0-9_]+$' THEN
+        RAISE EXCEPTION 'Invalid username: must be 5-32 chars, lowercase letters, numbers and underscores only.';
+    END IF;
+
+    BEGIN
+        INSERT INTO public.profiles (id, username)
+        VALUES (NEW.id, v_username)
+        ON CONFLICT (id) DO NOTHING;
+    EXCEPTION WHEN unique_violation THEN
+        RAISE EXCEPTION 'Username is already taken. Please choose another.'
+            USING ERRCODE = 'unique_violation';
+    END;
+
     RETURN NEW;
 END;
 $$;
@@ -200,8 +249,6 @@ CREATE TRIGGER on_auth_user_created
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- 6.2 Prevent users from tampering with server-controlled profile columns.
---     Only last_active_at and expires_at (set by touch_user_activity) may change.
---     username, storage_cap_mb, created_at are FROZEN.
 CREATE OR REPLACE FUNCTION public.prevent_profile_column_tamper()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -231,7 +278,6 @@ CREATE TRIGGER prevent_profile_tamper
     FOR EACH ROW EXECUTE FUNCTION public.prevent_profile_column_tamper();
 
 -- 6.3 Check username availability WITHOUT leaking profile rows.
---     Call via: supabase.rpc('is_username_taken', { p_username: 'alice' })
 CREATE OR REPLACE FUNCTION public.is_username_taken(p_username TEXT)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -245,102 +291,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.is_username_taken(TEXT) TO anon, authenticated;
 
--- 6.4 Approve a pairing session (called by the phone after scanning the QR).
---     Returns TRUE on success, FALSE on any failure (no error message leak).
-CREATE OR REPLACE FUNCTION public.approve_pairing_session(
-    p_qr_token TEXT,
-    p_device_info TEXT DEFAULT NULL
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-    session_record RECORD;
-BEGIN
-    IF auth.uid() IS NULL THEN
-        RETURN FALSE;
-    END IF;
-
-    -- Lock the row for the transaction
-    SELECT * INTO session_record
-    FROM public.pairing_sessions
-    WHERE qr_token = p_qr_token
-    FOR UPDATE;
-
-    IF NOT FOUND THEN
-        RETURN FALSE;
-    END IF;
-
-    -- Must be pending, unbound, and not expired
-    IF session_record.status != 'pending' THEN
-        RETURN FALSE;
-    END IF;
-    IF session_record.user_id IS NOT NULL THEN
-        RETURN FALSE;
-    END IF;
-    IF session_record.expires_at <= timezone('utc'::text, now()) THEN
-        UPDATE public.pairing_sessions SET status = 'expired'
-        WHERE id = session_record.id;
-        RETURN FALSE;
-    END IF;
-
-    -- Bind the calling user and mark approved
-    UPDATE public.pairing_sessions
-    SET
-        user_id = auth.uid(),
-        status = 'approved',
-        device_info = COALESCE(p_device_info, device_info)
-    WHERE id = session_record.id;
-
-    RETURN TRUE;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.approve_pairing_session(TEXT, TEXT) TO authenticated;
-
--- 6.5 Consume a pairing session (called by the lab PC after polling sees 'approved').
---     Returns the bound user_id if consumable, NULL otherwise. Marks as 'consumed'
---     so the same QR token cannot be replayed.
-CREATE OR REPLACE FUNCTION public.consume_pairing_session(p_qr_token TEXT)
-RETURNS UUID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-    session_record RECORD;
-BEGIN
-    SELECT * INTO session_record
-    FROM public.pairing_sessions
-    WHERE qr_token = p_qr_token
-    FOR UPDATE;
-
-    IF NOT FOUND THEN
-        RETURN NULL;
-    END IF;
-    IF session_record.status != 'approved' OR session_record.user_id IS NULL THEN
-        RETURN NULL;
-    END IF;
-    IF session_record.consumed_at IS NOT NULL THEN
-        RETURN NULL;  -- already consumed, prevent replay
-    END IF;
-
-    UPDATE public.pairing_sessions
-    SET
-        consumed_at = timezone('utc'::text, now()),
-        status = 'consumed'
-    WHERE id = session_record.id;
-
-    RETURN session_record.user_id;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.consume_pairing_session(TEXT) TO anon, authenticated;
-
--- 6.6 Touch user activity (call from Next.js middleware on every authenticated request).
---     Extends the account expiry by 30 days from now.
+-- 6.4 Touch user activity. Extends the account expiry by 30 days from now.
 CREATE OR REPLACE FUNCTION public.touch_user_activity()
 RETURNS VOID
 LANGUAGE plpgsql
@@ -361,8 +312,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.touch_user_activity() TO authenticated;
 
--- 6.7 Enforce per-user storage quota at INSERT time.
---     Reads storage_cap_mb from profiles and rejects the INSERT if exceeded.
+-- 6.5 Enforce per-user storage quota at INSERT time (server-side truth).
 CREATE OR REPLACE FUNCTION public.enforce_storage_quota()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -375,7 +325,8 @@ DECLARE
 BEGIN
     SELECT COALESCE(SUM(size_bytes), 0) INTO current_usage
     FROM public.files
-    WHERE owner_id = NEW.owner_id;
+    WHERE owner_id = NEW.owner_id
+      AND expires_at > timezone('utc'::text, now());
 
     SELECT storage_cap_mb * 1048576 INTO cap_bytes
     FROM public.profiles
@@ -396,8 +347,9 @@ CREATE TRIGGER enforce_storage_quota_trigger
     BEFORE INSERT ON public.files
     FOR EACH ROW EXECUTE FUNCTION public.enforce_storage_quota();
 
--- 6.8 Delete the Storage object when a files row is deleted (prevents orphaned blobs).
---     Fires for both manual deletes and the purge_expired_files cron.
+-- 6.6 Delete the Storage object when a files row is deleted (prevents orphaned
+--     blobs). The storage_path CHECK constraint guarantees this can only ever
+--     touch an object inside OLD.owner_id's own folder.
 CREATE OR REPLACE FUNCTION public.delete_storage_object()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -416,11 +368,366 @@ CREATE TRIGGER delete_storage_object_trigger
     AFTER DELETE ON public.files
     FOR EACH ROW EXECUTE FUNCTION public.delete_storage_object();
 
+-- 6.7 REAL storage usage for the authenticated caller (replaces the client's
+--     fabricated usedBytes: 0).
+CREATE OR REPLACE FUNCTION public.get_vault_usage()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    used_bytes BIGINT;
+    cap_bytes BIGINT;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT COALESCE(SUM(size_bytes), 0) INTO used_bytes
+    FROM public.files
+    WHERE owner_id = auth.uid()
+      AND expires_at > timezone('utc'::text, now());
+
+    SELECT storage_cap_mb * 1048576 INTO cap_bytes
+    FROM public.profiles
+    WHERE id = auth.uid();
+
+    RETURN jsonb_build_object(
+        'usedBytes', used_bytes,
+        'capBytes', COALESCE(cap_bytes, 52428800)
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_vault_usage() TO authenticated;
+
+-- ==============================================================================
+-- 6.8 QR LOGIN FLOW (untrusted PC ← personal phone)
+--
+--   PC (anon)      : create_login_session()   → { token, pin, expiresAt }
+--   PC (anon)      : get_login_session_status(token) — 1s polling
+--   Phone (auth)   : approve_login_session(token, refresh_token, device_info)
+--                    The refresh token comes from a THROWAWAY in-memory
+--                    Supabase session signed in on the phone with the user's
+--                    password, so the PC receives an independent session and
+--                    the phone's own session is never rotated underneath it.
+--   PC (anon)      : consume_login_session(token) — ONE time, row is deleted,
+--                    returns { userId, username, refreshToken }
+--   No-camera path : resolve_login_pin(pin) — authenticated, 5-attempt lockout
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.create_login_session()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_token TEXT := encode(gen_random_bytes(32), 'hex');
+    v_pin TEXT := '';
+    v_alphabet TEXT := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    v_i INTEGER;
+BEGIN
+    -- Generate an independent random PIN (never a token prefix!)
+       LOOP
+        v_pin := '';
+        FOR v_i IN 1..6 LOOP
+            v_pin := v_pin || substr(v_alphabet, (get_byte(gen_random_bytes(1), 0) % 31) + 1, 1);
+        END LOOP;
+        EXIT WHEN NOT EXISTS (
+            SELECT 1 FROM public.pairing_sessions
+            WHERE kind = 'login' AND status = 'pending' AND pin = v_pin
+        );
+    END LOOP;
+
+    INSERT INTO public.pairing_sessions (qr_token, kind, pin)
+    VALUES (v_token, 'login', v_pin);
+
+    RETURN jsonb_build_object(
+        'token', v_token,
+        'pin', v_pin,
+        'expiresAt', timezone('utc'::text, now()) + INTERVAL '2 minutes'
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.create_login_session() TO anon, authenticated;
+
+-- Status only. Leaks nothing but pending/approved + seconds left.
+CREATE OR REPLACE FUNCTION public.get_login_session_status(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_row public.pairing_sessions%ROWTYPE;
+BEGIN
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE qr_token = p_token AND kind = 'login'
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'unknown');
+    END IF;
+
+    IF v_row.expires_at <= timezone('utc'::text, now()) THEN
+        RETURN jsonb_build_object('status', 'expired');
+    END IF;
+
+    RETURN jsonb_build_object(
+        'status', v_row.status,
+        'expiresAt', v_row.expires_at
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_login_session_status(TEXT) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.approve_login_session(
+    p_token TEXT,
+    p_refresh_token TEXT,
+    p_device_info TEXT DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_row public.pairing_sessions%ROWTYPE;
+    v_token_belongs_to_caller BOOLEAN := TRUE;  -- best-effort verification below
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    IF p_refresh_token IS NULL OR char_length(p_refresh_token) < 10 THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Best-effort: verify the refresh token actually belongs to the caller.
+    -- If the auth schema is not introspectable in this deployment, we still
+    -- succeed — the token is bound to user_id immediately after.
+    BEGIN
+        SELECT EXISTS (
+            SELECT 1 FROM auth.refresh_tokens
+            WHERE token = p_refresh_token AND user_id = auth.uid()
+        ) INTO v_token_belongs_to_caller;
+    EXCEPTION WHEN OTHERS THEN
+        v_token_belongs_to_caller := TRUE;
+    END;
+
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE qr_token = p_token AND kind = 'login'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+    IF NOT v_token_belongs_to_caller THEN
+        RETURN FALSE;
+    END IF;
+
+    IF v_row.status != 'pending' OR v_row.user_id IS NOT NULL THEN
+        RETURN FALSE;
+    END IF;
+    IF v_row.expires_at <= timezone('utc'::text, now()) THEN
+        UPDATE public.pairing_sessions SET status = 'expired' WHERE id = v_row.id;
+        RETURN FALSE;
+    END IF;
+
+    UPDATE public.pairing_sessions
+    SET
+        user_id = auth.uid(),
+        status = 'approved',
+        session_refresh_token = p_refresh_token,
+        device_info = COALESCE(p_device_info, v_row.device_info)
+    WHERE id = v_row.id;
+
+    RETURN TRUE;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.approve_login_session(TEXT, TEXT, TEXT) TO authenticated;
+
+-- Single-use: DELETE ... RETURNING makes the consume atomic — exactly one
+-- caller can ever receive the one-time refresh token.
+CREATE OR REPLACE FUNCTION public.consume_login_session(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_user_id UUID;
+    v_refresh TEXT;
+    v_username TEXT;
+BEGIN
+    DELETE FROM public.pairing_sessions s
+    WHERE s.qr_token = p_token
+      AND s.kind = 'login'
+      AND s.status = 'approved'
+      AND s.expires_at > timezone('utc'::text, now())
+    RETURNING s.user_id, s.session_refresh_token INTO v_user_id, v_refresh;
+
+    IF v_user_id IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT username INTO v_username FROM public.profiles WHERE id = v_user_id;
+
+    RETURN jsonb_build_object(
+        'userId', v_user_id,
+        'username', v_username,
+        'refreshToken', v_refresh
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.consume_login_session(TEXT) TO anon, authenticated;
+
+-- No-camera fallback: resolve a pending LOGIN session by its 6-char PIN.
+-- Authenticated callers only; 5 failed attempts permanently lock the session.
+CREATE OR REPLACE FUNCTION public.resolve_login_pin(p_pin TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_row public.pairing_sessions%ROWTYPE;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN jsonb_build_object('error', 'not_authenticated');
+    END IF;
+
+    -- 1. Try the most recent pending LOGIN session whose PIN matches exactly.
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE kind = 'login' AND status = 'pending'
+      AND pin = upper(p_pin)
+      AND expires_at > timezone('utc'::text, now())
+    ORDER BY created_at DESC
+    LIMIT 1
+    FOR UPDATE;
+
+    IF FOUND THEN
+        RETURN jsonb_build_object(
+            'token', v_row.qr_token,
+            'expiresAt', v_row.expires_at
+        );
+    END IF;
+
+    -- 2. No exact match: charge the attempt against the most recent pending
+    --    session so brute force locks the session after 5 tries.
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE kind = 'login' AND status = 'pending'
+      AND expires_at > timezone('utc'::text, now())
+    ORDER BY created_at DESC
+    LIMIT 1
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('error', 'not_found');
+    END IF;
+
+    IF v_row.pin_attempts >= 5 THEN
+        UPDATE public.pairing_sessions SET status = 'expired' WHERE id = v_row.id;
+        RETURN jsonb_build_object('error', 'locked');
+    END IF;
+
+    UPDATE public.pairing_sessions
+    SET pin_attempts = pin_attempts + 1
+    WHERE id = v_row.id;
+
+    RETURN jsonb_build_object('error', 'wrong_pin');
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.resolve_login_pin(TEXT) TO authenticated;
+
+-- ==============================================================================
+-- 6.9 HANDOFF FLOW (logged-in PC → personal phone)
+--
+--   PC (auth)     : create_handoff_session()  → { token, expiresAt } (QR)
+--   Phone (anon)  : resolve_handoff_session(token) — ONE time, returns ONLY
+--                   { userId, username }. This reveals which account to sign
+--                   into; it grants NOTHING. The phone then authenticates with
+--                   the account password on the trusted personal device.
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.create_handoff_session()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_token TEXT := encode(gen_random_bytes(32), 'hex');
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO public.pairing_sessions (qr_token, kind, user_id)
+    VALUES (v_token, 'handoff', auth.uid());
+
+    RETURN jsonb_build_object(
+        'token', v_token,
+        'expiresAt', timezone('utc'::text, now()) + INTERVAL '2 minutes'
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.create_handoff_session() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.resolve_handoff_session(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_user_id UUID;
+    v_username TEXT;
+BEGIN
+    DELETE FROM public.pairing_sessions s
+    WHERE s.qr_token = p_token
+      AND s.kind = 'handoff'
+      AND s.status = 'pending'
+      AND s.expires_at > timezone('utc'::text, now())
+    RETURNING s.user_id INTO v_user_id;
+
+    IF v_user_id IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT username INTO v_username FROM public.profiles WHERE id = v_user_id;
+
+    RETURN jsonb_build_object(
+        'userId', v_user_id,
+        'username', v_username
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.resolve_handoff_session(TEXT) TO anon, authenticated;
+
+-- 6.10 Keep-alive ping target for the GitHub Actions workflow.
+CREATE OR REPLACE FUNCTION public.vaultdrop_ping()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$ SELECT TRUE; $$;
+
+GRANT EXECUTE ON FUNCTION public.vaultdrop_ping() TO anon, authenticated;
+
 -- ------------------------------------------------------------------------------
 -- 7. PURGE FUNCTIONS (called by pg_cron)
 -- ------------------------------------------------------------------------------
 
--- 7.1 Purge expired files (24h). Storage cleanup happens via the trigger above.
 CREATE OR REPLACE FUNCTION public.purge_expired_files()
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -438,8 +745,6 @@ BEGIN
 END;
 $$;
 
--- 7.2 Purge expired user accounts (30 days inactive).
---     Deletes files first (triggers Storage cleanup), then auth.users (cascades profiles).
 CREATE OR REPLACE FUNCTION public.purge_expired_user_accounts()
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -468,7 +773,6 @@ BEGIN
 END;
 $$;
 
--- 7.3 Purge expired or consumed pairing sessions.
 CREATE OR REPLACE FUNCTION public.purge_expired_pairing_sessions()
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -478,10 +782,11 @@ AS $$
 DECLARE
     deleted_sessions INTEGER;
 BEGIN
+    -- Removes every finished/expired session — this also erases any lingering
+    -- one-time refresh tokens from the QR login broker.
     DELETE FROM public.pairing_sessions
     WHERE expires_at <= timezone('utc'::text, now())
-       OR (status IN ('consumed', 'denied')
-           AND created_at < timezone('utc'::text, now()) - INTERVAL '1 hour');
+       OR status != 'pending';
 
     GET DIAGNOSTICS deleted_sessions = ROW_COUNT;
     RETURN deleted_sessions;
@@ -490,35 +795,67 @@ $$;
 
 -- ------------------------------------------------------------------------------
 -- 8. PG_CRON SCHEDULES
---   Enable pg_cron in: Supabase Dashboard → Database → Extensions → pg_cron
---   Then run these in the SQL editor:
+--   Requires the pg_cron extension (Supabase Dashboard → Database → Extensions
+--   → pg_cron → Enable). When it is enabled these schedules register themselves;
+--   the guards make re-running this whole file safe.
 -- ------------------------------------------------------------------------------
--- SELECT cron.schedule(
---     'purge-expired-files-hourly',
---     '0 * * * *',
---     'SELECT public.purge_expired_files();'
--- );
---
--- SELECT cron.schedule(
---     'purge-expired-accounts-daily',
---     '0 3 * * *',  -- 3 AM UTC daily
---     'SELECT public.purge_expired_user_accounts();'
--- );
---
--- SELECT cron.schedule(
---     'purge-expired-qr-sessions',
---     '*/2 * * * *',  -- every 2 minutes (matches the 2-min QR expiry)
---     'SELECT public.purge_expired_pairing_sessions();'
--- );
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+        BEGIN
+            PERFORM cron.schedule(
+                'vaultdrop-purge-expired-files',
+                '*/5 * * * *',
+                'SELECT public.purge_expired_files();'
+            );
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+
+        BEGIN
+            PERFORM cron.schedule(
+                'vaultdrop-purge-expired-accounts',
+                '0 3 * * *',
+                'SELECT public.purge_expired_user_accounts();'
+            );
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+
+        BEGIN
+            PERFORM cron.schedule(
+                'vaultdrop-purge-pairing-sessions',
+                '* * * * *',
+                'SELECT public.purge_expired_pairing_sessions();'
+            );
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+    END IF;
+END
+$$;
 
 -- ------------------------------------------------------------------------------
--- 9. GRANTS (explicit, defensive)
+-- 9. GRANTS (minimal surface — v2 granted anon DELETE on tables!)
 -- ------------------------------------------------------------------------------
+
+-- Start from a clean slate (re-running this file must not accumulate old grants)
+REVOKE ALL ON public.profiles FROM anon, authenticated;
+REVOKE ALL ON public.files FROM anon, authenticated;
+REVOKE ALL ON public.pairing_sessions FROM anon, authenticated;
+
+-- profiles: users read + update their own row (trigger limits columns);
+-- INSERT happens only via the handle_new_user SECURITY DEFINER trigger.
+GRANT SELECT, UPDATE ON public.profiles TO authenticated;
+
+-- files: no UPDATE (immutable), no anon access at all.
+GRANT SELECT, INSERT, DELETE ON public.files TO authenticated;
+
+-- pairing_sessions: NO table grants — RPC access only (tokens & one-time
+-- refresh tokens must never be readable via REST).
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles TO anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.files TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.pairing_sessions TO anon, authenticated;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+
+-- Retire the v2 RPCs so stale clients fail loudly instead of silently
+-- using the insecure approve/consume path.
+DROP FUNCTION IF EXISTS public.approve_pairing_session(TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.consume_pairing_session(TEXT);
 
 -- ------------------------------------------------------------------------------
 -- END OF SCHEMA

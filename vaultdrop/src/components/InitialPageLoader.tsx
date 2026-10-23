@@ -8,23 +8,24 @@ export function InitialPageLoader() {
   const [fading, setFading] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const alreadyShown = sessionStorage.getItem('vaultdrop_initial_loader_shown');
-      if (alreadyShown) {
-        return;
-      }
-      sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
-      setVisible(true);
+    if (typeof window === 'undefined') return;
 
-      const timer = setTimeout(() => {
-        setFading(true);
-        setTimeout(() => {
-          setVisible(false);
-        }, 300); // 300ms fade-out transition
-      }, 1000);
+    const alreadyShown = sessionStorage.getItem('vaultdrop_initial_loader_shown');
+    if (alreadyShown) return;
 
-      return () => clearTimeout(timer);
-    }
+    sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
+
+    // Deferred start (rAF) so no setState fires synchronously inside the effect.
+    const startId = requestAnimationFrame(() => setVisible(true));
+    const fadeTimer = setTimeout(() => {
+      setFading(true);
+      setTimeout(() => setVisible(false), 300); // 300ms fade-out transition
+    }, 1000);
+
+    return () => {
+      cancelAnimationFrame(startId);
+      clearTimeout(fadeTimer);
+    };
   }, []);
 
   if (!visible) return null;
@@ -35,10 +36,7 @@ export function InitialPageLoader() {
         fading ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >
-      <PeacockLoader
-        message="Initializing VaultDrop..."
-        submessage="Zero-Trace Ephemeral Protocol"
-      />
+      <PeacockLoader message="Initializing VaultDrop..." submessage="Zero-Trace Ephemeral Protocol" />
     </div>
   );
 }

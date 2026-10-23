@@ -28,6 +28,7 @@ import { PeacockLoader } from '@/components/PeacockLoader';
 import { Footer } from '@/components/Footer';
 import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
+import { isValidPairToken } from '@/lib/pair-helpers';
 
 type GatewayTab = 'qr' | 'password';
 
@@ -65,10 +66,10 @@ function LoginContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Zero-Trust Security: Synchronously purge any active tokens when reason is provided
+  // Zero-Trust Security: purge any active tokens when a reason is provided.
   useEffect(() => {
     if (reason) {
-      logoutUser();
+      void logoutUser();
       const timer = setTimeout(() => {
         setShowPanicAlert(false);
         setShowTimeoutAlert(false);
@@ -79,9 +80,11 @@ function LoginContent() {
         }
       }, 10000); // 10 seconds auto-dismiss
       return () => clearTimeout(timer);
-    } else if (getCurrentUser()) {
-      router.push('/');
     }
+    // Already signed in with a valid server session? Straight to the vault.
+    void getCurrentUser().then((current) => {
+      if (current) router.push('/');
+    });
   }, [reason, router]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -89,8 +92,8 @@ function LoginContent() {
     setError(null);
     setLoading(true);
 
-    if (username.trim().length <= 5) {
-      setError('Username must be at least 6 characters long.');
+    if (username.trim().length < 5) {
+      setError('Username must be at least 5 characters long.');
       setLoading(false);
       return;
     }
@@ -123,59 +126,39 @@ function LoginContent() {
     }
   };
 
-
-
+  // Scanned QR routing — STRICT: only valid 64-hex server tokens are accepted.
+  // Identity is NEVER granted from a URL: handoff tokens resolve to a username
+  // on /pair and still require the account password on the trusted phone.
   const handleScannedQR = (scannedText: string) => {
+    const clean = scannedText.trim();
+
+    let token: string | null = null;
+    let handoff: string | null = null;
     try {
-      const clean = scannedText.trim();
-      let token: string | null = null;
-      let handoffUser: string | null = null;
-      let handoffUid: string | null = null;
-
-      try {
-        const url = new URL(clean, typeof window !== 'undefined' ? window.location.origin : undefined);
-        token = url.searchParams.get('token');
-        handoffUser = url.searchParams.get('handoff');
-        handoffUid = url.searchParams.get('uid');
-      } catch {
-        const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9_-]+)/);
-        if (tokenMatch) token = tokenMatch[1];
-        const handoffMatch = clean.match(/[?&]handoff=([^&]+)/);
-        if (handoffMatch) handoffUser = decodeURIComponent(handoffMatch[1]);
-      }
-
-      if (handoffUser) {
-        const profile = {
-          id: handoffUid || `user_${handoffUser}`,
-          username: handoffUser,
-          storageCapMb: 50,
-          usedBytes: 0,
-          createdAt: new Date().toISOString(),
-          lastActiveAt: new Date().toISOString(),
-          accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        };
-
-        const expiry = (Date.now() + 30 * 60 * 1000).toString();
-        localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
-        localStorage.setItem('vaultdrop_session_expiry', expiry);
-        sessionStorage.setItem('vaultdrop_session_expiry', expiry);
-        sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
-
-        router.push('/');
-        return;
-      }
-
-      if (token || clean.length >= 32) {
-        const finalToken = token || clean;
-        router.push(`/pair?token=${encodeURIComponent(finalToken)}`);
-        return;
-      }
-
-      setError('Scanned QR code does not contain a valid session token.');
-    } catch (err) {
-      console.error('Scan handling error:', err);
-      setError('Failed to process scanned QR code.');
+      const url = new URL(clean, typeof window !== 'undefined' ? window.location.origin : undefined);
+      token = url.searchParams.get('token');
+      handoff = url.searchParams.get('handoff');
+    } catch {
+      const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9]+)/);
+      if (tokenMatch) token = tokenMatch[1];
+      const handoffMatch = clean.match(/[?&]handoff=([a-zA-Z0-9]+)/);
+      if (handoffMatch) handoff = handoffMatch[1];
     }
+
+    if (token && isValidPairToken(token)) {
+      router.push(`/pair?token=${token}`);
+      return;
+    }
+    if (handoff && isValidPairToken(handoff)) {
+      router.push(`/pair?handoff=${handoff}`);
+      return;
+    }
+    if (isValidPairToken(clean)) {
+      router.push(`/pair?token=${clean}`);
+      return;
+    }
+
+    setError('This QR code is not a valid VaultDrop pairing code.');
   };
 
   return (
@@ -338,8 +321,7 @@ function LoginContent() {
               ) : (
                 /* PC Monitor: Real Sharp Chromatic QR Code */
                 <QRLoginCard onSuccess={() => router.push('/')} />
-              )}
-            </div>
+              )}</div>
           )}
 
           {/* TAB 2: Username & Password Direct Flow */}
@@ -368,7 +350,7 @@ function LoginContent() {
               <form onSubmit={handlePasswordSubmit} className="space-y-4">
                 <div>
                   <label className="block text-[13px] font-semibold text-[#1A1A1A] mb-1">
-                    Username <span className="text-[11px] text-[#6B6B6B]">(6+ characters)</span>
+                    Username <span className="text-[11px] text-[#6B6B6B]">(5–32 characters)</span>
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-[#9B9B9B] absolute left-3 top-3.5" />

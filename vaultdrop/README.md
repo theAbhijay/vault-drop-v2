@@ -56,8 +56,8 @@ Every day, millions of students and researchers log into shared computers in uni
 │   (Authenticates securely)                  (Displays 2-Min Expiring QR)    │
 │       │                                                │                    │
 │       ▼                                                ▼                    │
-│  [ approve_pairing_session ] ──────────────► [ Real-Time Channel / Poller ] │
-│   PostgreSQL Atomic RPC                          Unlocks instantly!         │
+│  [ approve_login_session ] ────────────────► [ Real-Time Channel / Poller ] │
+│   One-time session broker                  Unlocks instantly!               │
 │       │                                                │                    │
 │       ▼                                                ▼                    │
 │  50MB Isolated Vault                         Download File / Print          │
@@ -66,10 +66,10 @@ Every day, millions of students and researchers log into shared computers in uni
 ```
 
 ### 1. Zero-Keystroke QR Handshake (Option 2 Architecture)
-- Generates a cryptographically strong, random pairing session token with a strict **120-second lifespan**.
-- Encoded as a direct URL: `https://your-domain/pair?token=<uuid>`.
-- **Works with any native camera app** (iOS Camera, Google Lens, Samsung Camera) — no specialized app download required.
-- Approving on your phone issues an atomic database transaction (`SELECT ... FOR UPDATE`) that transfers temporary session capability to the lab terminal without ever exposing your user credentials to the lab PC's network or memory.
+- The workstation requests a server-generated **256-bit pairing token** with a strict **120-second lifespan** plus an independent 6-character Workstation PIN (no-camera fallback, 5-attempt lockout).
+- Encoded as a direct URL: `https://your-domain/pair?token=<64-hex-token>`.
+- **Works with any native camera app** (iOS Camera, Google Lens, Samsung Camera) or the built-in in-browser dual-engine scanner (BarcodeDetector + jsQR) — no specialized app download required.
+- Approving on your phone (password confirmation on your personal device) deposits a **one-time refresh token** via an atomic `DELETE ... RETURNING` RPC. The workstation exchanges it exactly once for a real, RLS-enforced Supabase session — your credentials never touch the lab PC, and your phone's own session family stays untouched.
 
 ### 2. Apple WWDC Interaction Physics & Design System
 VaultDrop was engineered from the ground up according to the **Apple Human Interface Guidelines**:
@@ -81,10 +81,8 @@ VaultDrop was engineered from the ground up according to the **Apple Human Inter
 ### 3. Emergency Panic Wipe (`Esc 3x` or Floating Trigger)
 - Sitting in a lab and need to step away abruptly?
 - Pressing `Escape` three times in rapid succession ($< 800\text{ms}$) immediately invokes the client-side panic incinerator:
-  - Terminates all active Supabase auth sessions.
-  - Clears `localStorage`, `sessionStorage`, and all browser memory caches.
-  - Redirects to `/login?reason=panic` in $0\text{ms}$.
-  - Leaves zero residual traces in the browser history.
+  - Revokes the Supabase session server-side (`signOut`) and clears all tab-scoped session storage.
+  - Redirects to `/login?reason=panic` with no vault data left in the tab.
 
 ### 4. Self-Cleaning Storage & Database Lifecycle
 - **50 MB Strict Quota**: Enforced before file write at the PostgreSQL database level (`enforce_storage_quota_trigger`).
@@ -99,11 +97,14 @@ VaultDrop was engineered from the ground up according to the **Apple Human Inter
 ```
                                   DEFENSE IN DEPTH
                                 
-      Level 1: Client Isolation      No tokens saved to shared terminal disk
+      Level 1: Client Isolation      Tab-scoped session storage; nothing persists
+                                     on the shared terminal after the tab closes
       Level 2: Network Protection    TLS 1.3 + Supabase Row Level Security (RLS)
       Level 3: Zero-Leak Auth        PostgreSQL RPC: is_username_taken()
-      Level 4: Atomic Transactions   approve_pairing_session() with FOR UPDATE
-      Level 5: Physical Storage      Supabase S3 Bucket with strict user isolation
+      Level 4: Atomic Session Broker approve/consume_login_session() — one-time,
+                                     single-use refresh-token handoff
+      Level 5: Physical Storage      Private Supabase Storage bucket ("vault"),
+                                     encrypted at rest, strict per-user isolation
 ```
 
 ### 🛡️ Why VaultDrop is Mathematically & Architecturally Safer
@@ -120,7 +121,7 @@ VaultDrop was engineered from the ground up according to the **Apple Human Inter
    ```
 
 3. **Protection Against Lab PC Cache Poisoning**:
-   File previews open in isolated modal sandboxes with sandbox iframe headers (`sandbox="allow-scripts allow-same-origin"`). Sensitive files are never cached into the persistent OS filesystem.
+   File previews open in isolated modal sandboxes; PDFs render inside a locked-down iframe (`sandbox="allow-same-origin"` — no scripts). Sensitive files are never cached into the persistent OS filesystem.
 
 ---
 
@@ -167,9 +168,9 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 ### Step 4: Run the Supabase SQL Schema
 1. Open your **Supabase Dashboard** $\rightarrow$ Navigate to **SQL Editor**.
-2. Copy the entire contents of [`supabase_schema.sql`](../supabase_schema.sql).
+2. Copy the entire contents of [`supabase_schema.sql`](./supabase_schema.sql).
 3. Click **Run**.
-4. That's it! All tables (`profiles`, `files`, `pairing_sessions`), security policies (RLS), atomic triggers, and storage bucket definitions (`vault_files`) are automatically provisioned.
+4. That's it! All tables (`profiles`, `files`, `pairing_sessions`), RLS policies, the RPC session broker, quota triggers, and the private storage bucket (`vault`) are automatically provisioned.
 
 ### Step 5: Start the Development Server
 ```bash
@@ -203,7 +204,7 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
 Supabase free-tier projects pause after 7 days of inactivity. To ensure your instance never sleeps:
 
-This repository includes a scheduled GitHub Action in [`.github/workflows/supabase-keep-alive.yml`](../.github/workflows/supabase-keep-alive.yml):
+This repository includes a scheduled GitHub Action in [`.github/workflows/supabase-keep-alive.yml`](.github/workflows/supabase-keep-alive.yml):
 - Executes automatically **every 6 days at midnight UTC** (`0 0 */6 * *`).
 - Pings your Supabase REST health endpoint using repository secrets (`SUPABASE_URL` and `SUPABASE_ANON_KEY`).
 - Keeps your database hot, responsive, and 100% awake for whenever you need it.
@@ -243,12 +244,15 @@ Vault Drop/
         │   ├── IdleWarningBanner.tsx   # 2-minute slide-up session expiry warning
         │   └── OpenSourceLink.tsx      # Global responsive GitHub repository link
         ├── hooks/
-        │   └── useSessionTimer.ts      # 30-min idle session timer with auto-logout
+        │   ├── useSessionTimer.ts      # 30-min hard session TTL with cross-tab sync
+        │   ├── useIdleTimer.ts         # 15-min inactivity timer with 60s warning
+        │   └── useExpiryLabel.ts       # Shared live file-expiry countdown
         └── lib/
-            ├── supabase.ts             # Supabase client instantiation
-            ├── auth-helpers.ts         # User auth, registration & profile management
-            ├── file-helpers.ts         # S3 uploads, deletions & JSZip archive download
-            ├── pair-helpers.ts         # Cryptographic QR token generation & RPC locks
+            ├── supabase.ts             # Supabase client (tab-scoped sessions)
+            ├── auth-helpers.ts         # Server-validated auth, registration & profiles
+            ├── file-helpers.ts         # Storage uploads with real progress & JSZip archives
+            ├── pair-helpers.ts         # Secure QR login / handoff RPC client
+            ├── qr.ts                   # Apple chromatic QR renderer (shared)
             └── types.ts                # TypeScript interface definitions
 ```
 

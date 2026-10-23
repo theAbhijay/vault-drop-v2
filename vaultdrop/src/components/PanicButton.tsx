@@ -9,22 +9,32 @@ interface PanicButtonProps {
 
 export function PanicButton({ onPanic }: PanicButtonProps) {
   const escCountRef = useRef<number>(0);
-  const escTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const escTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keyboard shortcut: Press Escape 3 times rapidly
+  // onPanic in a ref — identity changes never re-bind the listener.
+  const onPanicRef = useRef(onPanic);
+  useEffect(() => {
+    onPanicRef.current = onPanic;
+  }, [onPanic]);
+
+  // Keyboard shortcut: press Escape 3 times rapidly. Escapes consumed by an
+  // open modal (scanner, preview, handoff) are ignored so closing dialogs can
+  // never trigger a destructive wipe by accident.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        escCountRef.current += 1;
-        if (escTimerRef.current) clearTimeout(escTimerRef.current);
+      if (e.key !== 'Escape') return;
+      if (document.body.dataset.vaultdropModalOpen) return;
 
-        if (escCountRef.current >= 3) {
-          onPanic();
-        } else {
-          escTimerRef.current = setTimeout(() => {
-            escCountRef.current = 0;
-          }, 800);
-        }
+      escCountRef.current += 1;
+      if (escTimerRef.current) clearTimeout(escTimerRef.current);
+
+      if (escCountRef.current >= 3) {
+        escCountRef.current = 0;
+        onPanicRef.current();
+      } else {
+        escTimerRef.current = setTimeout(() => {
+          escCountRef.current = 0;
+        }, 800);
       }
     };
 
@@ -33,14 +43,15 @@ export function PanicButton({ onPanic }: PanicButtonProps) {
       window.removeEventListener('keydown', handleKeyDown);
       if (escTimerRef.current) clearTimeout(escTimerRef.current);
     };
-  }, [onPanic]);
+  }, []);
 
   return (
     <div className="fixed bottom-6 right-6 z-50">
       <button
         onClick={onPanic}
         title="Panic Button: Instant 0ms Screen Wipe (Shortcut: Esc 3x)"
-        className="group flex items-center gap-2 bg-[#C8102E] hover:bg-[#A00C24] text-white px-4 py-3 rounded-full shadow-lg shadow-[#C8102E]/25 transition-all duration-100 tap-spring cursor-pointer focus:outline-none"
+        aria-label="Panic wipe: immediately sign out and clear this screen"
+        className="group flex items-center gap-2 bg-[#C8102E] hover:bg-[#A00C24] text-white px-4 py-3 rounded-full shadow-lg shadow-[#C8102E]/25 transition-all duration-100 tap-spring cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#C8102E]"
       >
         <ShieldAlert className="w-4 h-4 text-white" />
         <span className="text-[13px] font-semibold tracking-wide uppercase pr-1">Panic Wipe</span>

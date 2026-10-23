@@ -1,10 +1,12 @@
 import JSZip from 'jszip';
-import { VaultFile, FileCategory } from './types';
-import { supabase, isSupabaseConfigured } from './supabase';
+import { VaultFile, FileCategory, VaultUsage } from './types';
+import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from './supabase';
+import { isMockMode } from './auth-helpers';
 
 export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB (20,971,520 bytes)
 export const MAX_USER_STORAGE_BYTES = 50 * 1024 * 1024; // 50 MB
 const MOCK_STORAGE_FILES_PREFIX = 'vaultdrop_files_';
+const SIGNED_URL_TTL_SECONDS = 3600;
 
 /**
  * Categorize MIME types and file extensions into 6 UI filter buckets.
@@ -38,13 +40,13 @@ export function getFileCategory(filename: string, mimeType: string): FileCategor
 }
 
 /**
- * Format bytes to human-readable string.
+ * Format bytes to human-readable string. Guarded against negative/NaN input.
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
@@ -87,10 +89,82 @@ export function generateUUID(): string {
   });
 }
 
+/** Extract a safe, conservative file extension (letters/digits only, <= 10 chars). */
+function safeExtension(filename: string): string {
+  const ext = (filename.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return ext.slice(0, 10);
+}
+
+/**
+ * Storage keys are `user_<ownerId>/<fileId>.<ext>` — the raw filename NEVER
+ * enters the path (no traversal, no unicode tricks, no mismatch on rebuild),
+ * and the schema CHECK constraint guarantees the path stays in the owner folder.
+ */
+function buildStoragePath(userId: string, fileId: string, filename: string): string {
+  const ext = safeExtension(filename);
+  return ext ? `user_${userId}/${fileId}.${ext}` : `user_${userId}/${fileId}`;
+}
+
+/**
+ * Upload to Supabase Storage with REAL byte-accurate progress via XHR
+ * (the SDK's upload() has no progress callback). Falls back to SDK upload
+ * if the session token can't be obtained.
+ */
+function uploadWithProgress(
+  storagePath: string,
+  file: File,
+  accessToken: string,
+  onByteProgress?: (fraction: number) => void
+): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    // Encode each path segment individually — keep the `/` separators intact.
+    const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
+    xhr.open('POST', `${supabaseUrl}/storage/v1/object/vault/${encodedPath}`);
+    xhr.setRequestHeader('apikey', supabaseAnonKey);
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.setRequestHeader('cache-control', '3600');
+    if (file.type) xhr.setRequestHeader('Content-Type', file.type);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) {
+        onByteProgress?.(e.loaded / e.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve({ ok: true });
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          resolve({ ok: false, error: body.message || body.error || `Upload failed (HTTP ${xhr.status})` });
+        } catch {
+          resolve({ ok: false, error: `Upload failed (HTTP ${xhr.status})` });
+        }
+      }
+    };
+
+    xhr.onerror = () => resolve({ ok: false, error: 'Network error during upload.' });
+    xhr.onabort = () => resolve({ ok: false, error: 'Upload cancelled.' });
+
+    xhr.send(file);
+  });
+}
+
+/** Map overall upload pipeline progress: 15% start → 85% bytes → 90% DB → 100% signed URL. */
+function pipelineProgress(stage: 'start' | number | 'db' | 'done', onProgress?: (p: number) => void) {
+  if (!onProgress) return;
+  if (stage === 'start') onProgress(15);
+  else if (stage === 'db') onProgress(90);
+  else if (stage === 'done') onProgress(100);
+  else onProgress(15 + Math.round(Math.min(Math.max(stage, 0), 1) * 70));
+}
+
 /**
  * Upload a file to user's ephemeral vault.
- * Validates constraints (filename 1-255, MIME 1-100, size <= 20MB, quota <= 50MB).
- * Handled gracefully if PostgreSQL BEFORE INSERT trigger throws quota_exceeded.
+ * Client checks are UX only — the Postgres quota trigger is the real enforcement.
  */
 export async function uploadVaultFile(
   userId: string,
@@ -111,40 +185,46 @@ export async function uploadVaultFile(
   }
 
   const mimeType = (file.type || 'application/octet-stream').substring(0, 100);
-
-  // 2. Client-side storage cap check
-  const existingFiles = await getUserFiles(userId);
-  const currentTotal = existingFiles.reduce((acc, f) => acc + f.size, 0);
-  if (currentTotal + file.size > MAX_USER_STORAGE_BYTES) {
-    return { success: false, error: 'Storage cap exceeded. Total vault usage cannot exceed 50 MB.' };
-  }
-
-  onProgress?.(15);
-
-  const fileId = generateUUID();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
   const category = getFileCategory(file.name, mimeType);
 
   // Supabase Cloud Environment
   if (isSupabaseConfigured && supabase) {
-    const storagePath = `user_${userId}/${fileId}_${file.name}`;
-    onProgress?.(35);
-
-    // Upload bytes to private bucket 'vault'
-    const { error: storageError } = await supabase.storage
-      .from('vault')
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: false,
-      });
-
-    if (storageError) {
-      return { success: false, error: storageError.message };
+    // 2. Server-truth quota pre-check (the trigger remains the enforcement)
+    const usage = await getVaultUsage();
+    if (usage && usage.usedBytes + file.size > usage.capBytes) {
+      return { success: false, error: 'Storage cap exceeded. Delete old files to free up space.' };
     }
 
-    onProgress?.(70);
+    pipelineProgress('start', onProgress);
 
-    // Insert metadata into database (enforce_storage_quota_trigger runs here)
+    const fileId = generateUUID();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
+    const storagePath = buildStoragePath(userId, fileId, file.name);
+
+    // 3. Upload bytes with real byte progress
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+
+    let uploadResult: { ok: boolean; error?: string };
+    if (accessToken) {
+      uploadResult = await uploadWithProgress(storagePath, file, accessToken, (fraction) =>
+        pipelineProgress(fraction, onProgress)
+      );
+    } else {
+      const { error: sdkError } = await supabase.storage
+        .from('vault')
+        .upload(storagePath, file, { cacheControl: '3600', upsert: false });
+      uploadResult = sdkError ? { ok: false, error: sdkError.message } : { ok: true };
+      if (uploadResult.ok) pipelineProgress(1, onProgress);
+    }
+
+    if (!uploadResult.ok) {
+      return { success: false, error: uploadResult.error || 'Upload failed.' };
+    }
+
+    pipelineProgress('db', onProgress);
+
+    // 4. Register metadata (enforce_storage_quota_trigger runs here)
     const { error: dbError } = await supabase.from('files').insert({
       id: fileId,
       owner_id: userId,
@@ -156,22 +236,22 @@ export async function uploadVaultFile(
     });
 
     if (dbError) {
-      // Rollback storage file if database rejected
-      await supabase.storage.from('vault').remove([storagePath]);
-      if (dbError.message.includes('Storage quota exceeded') || dbError.code === 'P0001') {
+      // Rollback the storage object if the database rejected the row
+      await supabase.storage.from('vault').remove([storagePath]).catch(() => {});
+      const message = dbError.message || '';
+      if (dbError.code === 'P0001' || message.toLowerCase().includes('quota')) {
         return { success: false, error: 'Storage quota exceeded. Please delete old files to free up space.' };
       }
-      return { success: false, error: dbError.message };
+      if (dbError.code === '23505' || message.toLowerCase().includes('duplicate')) {
+        return { success: false, error: 'This file is already in your vault. Try again.' };
+      }
+      return { success: false, error: 'Upload could not be registered. Please try again.' };
     }
 
-    onProgress?.(90);
+    // 5. Short-lived signed URL so preview/download work immediately
+    const { data: signedUrlData } = await supabase.storage.from('vault').createSignedUrl(storagePath, 60);
 
-    // Generate short-lived signed URL (60s)
-    const { data: signedUrlData } = await supabase.storage
-      .from('vault')
-      .createSignedUrl(storagePath, 60);
-
-    onProgress?.(100);
+    pipelineProgress('done', onProgress);
 
     const uploadedFile: VaultFile = {
       id: fileId,
@@ -183,108 +263,159 @@ export async function uploadVaultFile(
       expiresAt,
       storagePath,
       url: signedUrlData?.signedUrl,
+      urlExpiresAt: Date.now() + 55 * 1000,
       blob: file,
     };
 
     return { success: true, file: uploadedFile };
   }
 
-  // Fallback (Local Development)
-  onProgress?.(50);
-  let content: string | undefined;
-  if (file.type.startsWith('text/') || ['json', 'js', 'ts', 'py', 'c', 'cpp', 'html', 'css', 'md'].includes(file.name.split('.').pop() || '')) {
-    try {
-      content = await file.text();
-    } catch {
-      // ignore
+  // Local development mock
+  if (isMockMode && typeof window !== 'undefined') {
+    onProgress?.(30);
+    const existingFiles = await getUserFiles(userId).catch(() => [] as VaultFile[]);
+    const currentTotal = existingFiles.reduce((acc, f) => acc + f.size, 0);
+    if (currentTotal + file.size > MAX_USER_STORAGE_BYTES) {
+      return { success: false, error: 'Storage cap exceeded. Total vault usage cannot exceed 50 MB.' };
     }
+
+    onProgress?.(60);
+    let content: string | undefined;
+    if (
+      file.type.startsWith('text/') ||
+      ['json', 'js', 'ts', 'py', 'c', 'cpp', 'html', 'css', 'md'].includes(file.name.split('.').pop() || '')
+    ) {
+      try {
+        content = await file.text();
+      } catch {
+        // ignore
+      }
+    }
+
+    onProgress?.(85);
+    const fileId = generateUUID();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const newFile: VaultFile = {
+      id: fileId,
+      name: file.name,
+      size: file.size,
+      type: mimeType,
+      category,
+      uploadedAt: new Date().toISOString(),
+      expiresAt,
+      url: URL.createObjectURL(file),
+      content,
+      blob: file,
+    };
+
+    const updatedFiles = [newFile, ...existingFiles.map((f) => ({ ...f, blob: undefined }))];
+    localStorage.setItem(
+      `${MOCK_STORAGE_FILES_PREFIX}${userId}`,
+      JSON.stringify(updatedFiles.map((f) => ({ ...f, blob: undefined })))
+    );
+
+    onProgress?.(100);
+    return { success: true, file: newFile };
   }
 
-  onProgress?.(80);
-  const objectUrl = URL.createObjectURL(file);
-  const newFile: VaultFile = {
-    id: fileId,
-    name: file.name,
-    size: file.size,
-    type: mimeType,
-    category,
-    uploadedAt: new Date().toISOString(),
-    expiresAt,
-    url: objectUrl,
-    content,
-    blob: file,
-  };
-
-  const updatedFiles = [newFile, ...existingFiles];
-  if (typeof window !== 'undefined') {
-    const metaList = updatedFiles.map(f => ({
-      ...f,
-      blob: undefined,
-    }));
-    localStorage.setItem(`${MOCK_STORAGE_FILES_PREFIX}${userId}`, JSON.stringify(metaList));
-  }
-
-  onProgress?.(100);
-  return { success: true, file: newFile };
+  return { success: false, error: 'VaultDrop is not configured.' };
 }
 
 /**
- * Fetch all valid (unexpired) files for a user.
- * Generates signed URLs in batch so preview and download work immediately.
+ * Server-truth vault usage (get_vault_usage RPC). Returns null when offline —
+ * callers should keep their last known value rather than resetting to 0.
  */
-export async function getUserFiles(userId: string): Promise<VaultFile[]> {
+export async function getVaultUsage(): Promise<VaultUsage | null> {
+  if (!(isSupabaseConfigured && supabase)) return null;
+  try {
+    const { data, error } = await supabase.rpc('get_vault_usage');
+    if (error || !data) return null;
+    return { usedBytes: Number(data.usedBytes ?? 0), capBytes: Number(data.capBytes ?? MAX_USER_STORAGE_BYTES) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch all live files for a user. THROWS on transport errors so callers can
+ * keep their previous list — a transient network blip must never look like an
+ * empty vault. Fresh signed URLs are batch-generated; entries still fresh from
+ * a previous fetch are reused to keep the 8-second heartbeat cheap.
+ */
+export async function getUserFiles(
+  userId: string,
+  previous?: VaultFile[]
+): Promise<VaultFile[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('files')
-      .select('*')
+      .select('id, filename, storage_path, size_bytes, mime_type, created_at, expires_at')
       .eq('owner_id', userId)
       .order('expires_at', { ascending: false });
 
-    if (error || !data) return [];
+    if (error) throw new Error(error.message || 'Failed to load vault files.');
+    if (!data) return [];
 
     const now = Date.now();
-    const valid = data.filter(row => new Date(row.expires_at).getTime() > now);
+    const valid = data.filter((row) => new Date(row.expires_at).getTime() > now);
     if (valid.length === 0) return [];
 
-    // Batch generate signed URLs (valid 3600 seconds) so every file has an active download URL
-    const paths = valid.map(row => row.storage_path);
-    const urlMap = new Map<string, string>();
-    try {
-      const { data: signedUrls } = await supabase.storage
-        .from('vault')
-        .createSignedUrls(paths, 3600);
-
-      if (signedUrls) {
-        signedUrls.forEach(item => {
-          if (item && item.signedUrl && item.path) {
-            urlMap.set(item.path, item.signedUrl);
-          }
-        });
+    // Reuse URLs that are still comfortably fresh (>90s remaining)
+    const freshUrls = new Map<string, { url: string; urlExpiresAt: number }>();
+    previous?.forEach((f) => {
+      if (f.storagePath && f.url && f.urlExpiresAt && f.urlExpiresAt > now + 90 * 1000) {
+        freshUrls.set(f.storagePath, { url: f.url, urlExpiresAt: f.urlExpiresAt });
       }
-    } catch (err) {
-      console.warn('Batch createSignedUrls error:', err);
+    });
+
+    const stalePaths = valid
+      .map((row) => row.storage_path as string)
+      .filter((path) => !freshUrls.has(path));
+
+    if (stalePaths.length > 0) {
+      try {
+        const { data: signedUrls, error: urlError } = await supabase.storage
+          .from('vault')
+          .createSignedUrls(stalePaths, SIGNED_URL_TTL_SECONDS);
+        if (!urlError && signedUrls) {
+          signedUrls.forEach((item) => {
+            if (item?.signedUrl && item?.path) {
+              freshUrls.set(item.path, {
+                url: item.signedUrl,
+                urlExpiresAt: now + (SIGNED_URL_TTL_SECONDS - 60) * 1000,
+              });
+            }
+          });
+        }
+      } catch {
+        // Signed URLs are a convenience; rows still render without them.
+      }
     }
 
-    return valid.map(row => ({
-      id: row.id,
-      name: row.filename,
-      size: Number(row.size_bytes),
-      type: row.mime_type,
-      category: getFileCategory(row.filename, row.mime_type),
-      uploadedAt: row.created_at,
-      expiresAt: row.expires_at,
-      storagePath: row.storage_path,
-      url: urlMap.get(row.storage_path),
-    }));
+    return valid.map((row) => {
+      const fresh = freshUrls.get(row.storage_path);
+      return {
+        id: row.id,
+        name: row.filename,
+        size: Number(row.size_bytes),
+        type: row.mime_type,
+        category: getFileCategory(row.filename, row.mime_type),
+        uploadedAt: row.created_at,
+        expiresAt: row.expires_at,
+        storagePath: row.storage_path,
+        url: fresh?.url,
+        urlExpiresAt: fresh?.urlExpiresAt,
+      };
+    });
   }
 
-  if (typeof window !== 'undefined') {
+  if (isMockMode && typeof window !== 'undefined') {
     const raw = localStorage.getItem(`${MOCK_STORAGE_FILES_PREFIX}${userId}`);
     if (!raw) return [];
     try {
       const files: VaultFile[] = JSON.parse(raw);
       const now = Date.now();
-      return files.filter(f => new Date(f.expiresAt).getTime() > now);
+      return files.filter((f) => new Date(f.expiresAt).getTime() > now);
     } catch {
       return [];
     }
@@ -294,19 +425,24 @@ export async function getUserFiles(userId: string): Promise<VaultFile[]> {
 }
 
 /**
- * Delete a specific file.
- * In Supabase, the AFTER DELETE trigger automatically removes the object from storage!
+ * Delete a specific file — VERIFIED. Returns true only when the database row
+ * was actually deleted (which also fires the storage-cleanup trigger).
  */
 export async function deleteVaultFile(userId: string, fileId: string): Promise<boolean> {
   if (isSupabaseConfigured && supabase) {
-    // Delete database row -> triggers delete_storage_object() automatically
-    const { error } = await supabase.from('files').delete().eq('id', fileId);
-    return !error;
+    const { data, error } = await supabase
+      .from('files')
+      .delete({ count: 'exact' })
+      .eq('id', fileId)
+      .eq('owner_id', userId)
+      .select('id');
+
+    return !error && Array.isArray(data) && data.length > 0;
   }
 
-  if (typeof window !== 'undefined') {
-    const files = await getUserFiles(userId);
-    const filtered = files.filter(f => f.id !== fileId);
+  if (isMockMode && typeof window !== 'undefined') {
+    const files = await getUserFiles(userId).catch(() => [] as VaultFile[]);
+    const filtered = files.filter((f) => f.id !== fileId);
     localStorage.setItem(`${MOCK_STORAGE_FILES_PREFIX}${userId}`, JSON.stringify(filtered));
     return true;
   }
@@ -314,82 +450,60 @@ export async function deleteVaultFile(userId: string, fileId: string): Promise<b
   return false;
 }
 
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const blobUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.style.display = 'none';
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    if (document.body.contains(link)) document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+  }, 2000);
+}
+
+/** Download the binary payload for a file from Storage (never rebuild the path). */
+async function fetchFileBlob(file: VaultFile): Promise<Blob | null> {
+  if (file.blob) return file.blob;
+
+  if (isSupabaseConfigured && supabase && file.storagePath) {
+    try {
+      const { data, error } = await supabase.storage.from('vault').download(file.storagePath);
+      if (!error && data) return data;
+    } catch {
+      // fall through to signed URL
+    }
+  }
+
+  if (file.url) {
+    try {
+      const response = await fetch(file.url);
+      if (response.ok) return await response.blob();
+    } catch {
+      // fall through
+    }
+  }
+
+  if (file.content) {
+    return new Blob([file.content], { type: file.type || 'text/plain' });
+  }
+
+  return null;
+}
+
 /**
- * Direct file download guaranteed to work reliably on both PC and mobile smartphones.
- * Obtains binary Blob and triggers same-origin download with exact filename.
+ * Direct file download guaranteed to work reliably on both PC and mobile
+ * smartphones: fetch bytes → same-origin blob: URL → programmatic anchor click.
+ * Returns false ONLY when nothing could be downloaded (no silent fake success).
  */
-export async function downloadVaultFileDirectly(file: VaultFile, userId?: string): Promise<boolean> {
+export async function downloadVaultFileDirectly(file: VaultFile): Promise<boolean> {
   try {
-    let blob: Blob | null = file.blob || null;
-
-    // 1. Direct binary download from Supabase Storage
-    if (!blob && isSupabaseConfigured && supabase) {
-      const storagePath = file.storagePath || (userId ? `user_${userId}/${file.id}_${file.name}` : undefined);
-      if (storagePath) {
-        try {
-          const { data, error } = await supabase.storage.from('vault').download(storagePath);
-          if (!error && data) {
-            blob = data;
-          }
-        } catch {
-          // fallback to URL
-        }
-      }
-    }
-
-    // 2. Fetch via signed or direct URL as binary Blob
-    if (!blob && file.url) {
-      try {
-        const response = await fetch(file.url);
-        if (response.ok) {
-          blob = await response.blob();
-        }
-      } catch (err) {
-        console.warn('Fetch from signed URL failed:', err);
-      }
-    }
-
-    // 3. Fallback for text content in local/mock mode
-    if (!blob && file.content) {
-      blob = new Blob([file.content], { type: file.type || 'text/plain' });
-    }
-
-    // 4. Trigger download with same-origin blob: URL (guaranteed not blocked by browser download policy)
-    if (blob) {
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.style.display = 'none';
-      link.href = blobUrl;
-      link.download = file.name;
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (document.body.contains(link)) {
-          document.body.removeChild(link);
-        }
-        window.URL.revokeObjectURL(blobUrl);
-      }, 2000);
-      return true;
-    }
-
-    // 5. Direct window/link navigation fallback
-    if (file.url) {
-      const link = document.createElement('a');
-      link.style.display = 'none';
-      link.href = file.url;
-      link.download = file.name;
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (document.body.contains(link)) {
-          document.body.removeChild(link);
-        }
-      }, 1000);
-      return true;
-    }
-
-    return false;
+    const blob = await fetchFileBlob(file);
+    if (!blob) return false;
+    triggerBlobDownload(blob, file.name);
+    return true;
   } catch (err) {
     console.error('downloadVaultFileDirectly failed:', err);
     return false;
@@ -398,59 +512,47 @@ export async function downloadVaultFileDirectly(file: VaultFile, userId?: string
 
 /**
  * Bulk zip download of selected files using JSZip.
+ * Downloads in PARALLEL; returns the names of files that could not be fetched
+ * so the UI can warn about an incomplete archive. Throws only if everything
+ * failed or zip generation fails.
  */
 export async function downloadFilesAsZip(
   files: VaultFile[],
-  zipName = 'vaultdrop_bundle.zip',
-  userId?: string
-): Promise<void> {
+  zipName = 'vaultdrop_bundle.zip'
+): Promise<{ failed: string[] }> {
   const zip = new JSZip();
 
-  for (const file of files) {
-    let blob: Blob | null = file.blob || null;
+  const results = await Promise.allSettled(files.map((file) => fetchFileBlob(file)));
 
-    if (!blob && isSupabaseConfigured && supabase) {
-      const storagePath = file.storagePath || (userId ? `user_${userId}/${file.id}_${file.name}` : undefined);
-      if (storagePath) {
-        try {
-          const { data } = await supabase.storage.from('vault').download(storagePath);
-          if (data) blob = data;
-        } catch {
-          // ignore
-        }
+  const failed: string[] = [];
+  const used = new Set<string>();
+  let added = 0;
+
+  results.forEach((result, index) => {
+    const file = files[index];
+    if (result.status === 'fulfilled' && result.value) {
+      // Defend against duplicate names inside the archive
+      let name = file.name;
+      let n = 2;
+      while (used.has(name)) {
+        const dot = file.name.lastIndexOf('.');
+        name = dot > 0 ? `${file.name.slice(0, dot)} (${n})${file.name.slice(dot)}` : `${file.name} (${n})`;
+        n += 1;
       }
+      used.add(name);
+      zip.file(name, result.value);
+      added += 1;
+    } else {
+      failed.push(file.name);
     }
+  });
 
-    if (!blob && file.url) {
-      try {
-        const response = await fetch(file.url);
-        if (response.ok) {
-          blob = await response.blob();
-        }
-      } catch (e) {
-        console.error('Failed to download file for zip:', file.name, e);
-      }
-    }
-
-    if (blob) {
-      zip.file(file.name, blob);
-    } else if (file.content) {
-      zip.file(file.name, file.content);
-    }
+  if (added === 0) {
+    throw new Error('None of the selected files could be downloaded.');
   }
 
   const content = await zip.generateAsync({ type: 'blob' });
-  const downloadUrl = window.URL.createObjectURL(content);
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = downloadUrl;
-  a.download = zipName;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    if (document.body.contains(a)) {
-      document.body.removeChild(a);
-    }
-    window.URL.revokeObjectURL(downloadUrl);
-  }, 2000);
+  triggerBlobDownload(content, zipName);
+
+  return { failed };
 }

@@ -1,19 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { 
-  FileText, 
-  Image as ImageIcon, 
-  FileCode, 
-  FileArchive, 
+import {
+  FileText,
+  Image as ImageIcon,
+  FileCode,
+  FileArchive,
   File as GenericFileIcon,
-  Download, 
-  Trash2, 
-  Eye, 
-  Clock 
+  Download,
+  Trash2,
+  Eye,
+  Clock,
 } from 'lucide-react';
 import { VaultFile } from '@/lib/types';
-import { formatBytes, getExpiryLabel } from '@/lib/file-helpers';
+import { formatBytes } from '@/lib/file-helpers';
+import { useExpiryLabel } from '@/hooks/useExpiryLabel';
 
 interface FileRowProps {
   file: VaultFile;
@@ -32,18 +32,7 @@ export function FileRow({
   onDownload,
   onDelete,
 }: FileRowProps) {
-  const [expiry, setExpiry] = useState<{ label: string; isUrgent: boolean }>({
-    label: 'Calculating...',
-    isUrgent: false,
-  });
-
-  useEffect(() => {
-    setExpiry(getExpiryLabel(file.expiresAt));
-    const timer = setInterval(() => {
-      setExpiry(getExpiryLabel(file.expiresAt));
-    }, 30000); // Ticker every 30s
-    return () => clearInterval(timer);
-  }, [file.expiresAt]);
+  const expiry = useExpiryLabel(file.expiresAt);
 
   // Color-coded badge & icon matching spec
   const getBadgeStyle = () => {
@@ -95,6 +84,7 @@ export function FileRow({
           type="checkbox"
           checked={isSelected}
           onChange={() => onToggleSelect(file.id)}
+          aria-label={`Select ${file.name}`}
           className="w-4 h-4 rounded text-[#014BAA] focus:ring-0 focus:ring-offset-0 border-[#E5DCD4] cursor-pointer"
         />
 
@@ -109,8 +99,16 @@ export function FileRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span
+              role="button"
+              tabIndex={0}
               onClick={() => onPreview(file)}
-              className="text-[14px] sm:text-[15px] font-semibold text-[#1A1A1A] truncate cursor-pointer hover:text-[#014BAA] transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onPreview(file);
+                }
+              }}
+              className="text-[14px] sm:text-[15px] font-semibold text-[#1A1A1A] truncate cursor-pointer hover:text-[#014BAA] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3] rounded"
               title={file.name}
             >
               {file.name}
@@ -138,6 +136,7 @@ export function FileRow({
           onClick={() => onPreview(file)}
           className="p-2 sm:p-2.5 text-[#6B6B6B] hover:text-[#014BAA] hover:bg-[#014BAA]/5 rounded-xl transition-colors tap-spring cursor-pointer"
           title="Quick Preview"
+          aria-label={`Preview ${file.name}`}
         >
           <Eye className="w-4 h-4" />
         </button>
@@ -146,6 +145,7 @@ export function FileRow({
           onClick={() => onDownload(file)}
           className="p-2 sm:p-2.5 text-[#6B6B6B] hover:text-[#014BAA] hover:bg-[#014BAA]/5 rounded-xl transition-colors tap-spring cursor-pointer"
           title="Download File"
+          aria-label={`Download ${file.name}`}
         >
           <Download className="w-4 h-4" />
         </button>
@@ -154,6 +154,7 @@ export function FileRow({
           onClick={() => onDelete(file.id)}
           className="p-2 sm:p-2.5 text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 rounded-xl transition-colors tap-spring cursor-pointer"
           title="Delete Immediately"
+          aria-label={`Delete ${file.name}`}
         >
           <Trash2 className="w-4 h-4" />
         </button>

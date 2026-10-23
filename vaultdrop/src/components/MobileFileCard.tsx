@@ -1,19 +1,20 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { 
-  FileText, 
-  Image as ImageIcon, 
-  FileCode, 
-  FileArchive, 
+import React from 'react';
+import {
+  FileText,
+  Image as ImageIcon,
+  FileCode,
+  FileArchive,
   File as GenericFileIcon,
-  Download, 
-  Trash2, 
-  Eye, 
-  Clock 
+  Download,
+  Trash2,
+  Eye,
+  Clock,
 } from 'lucide-react';
 import { VaultFile } from '@/lib/types';
-import { formatBytes, getExpiryLabel } from '@/lib/file-helpers';
+import { formatBytes } from '@/lib/file-helpers';
+import { useExpiryLabel } from '@/hooks/useExpiryLabel';
 
 interface MobileFileCardProps {
   file: VaultFile;
@@ -32,18 +33,7 @@ export function MobileFileCard({
   onDownload,
   onDelete,
 }: MobileFileCardProps) {
-  const [expiry, setExpiry] = useState<{ label: string; isUrgent: boolean }>({
-    label: 'Calculating...',
-    isUrgent: false,
-  });
-
-  useEffect(() => {
-    setExpiry(getExpiryLabel(file.expiresAt));
-    const timer = setInterval(() => {
-      setExpiry(getExpiryLabel(file.expiresAt));
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [file.expiresAt]);
+  const expiry = useExpiryLabel(file.expiresAt);
 
   const getIcon = () => {
     switch (file.category) {
@@ -70,9 +60,18 @@ export function MobileFileCard({
     >
       <div className="flex items-start justify-between gap-3">
         {/* Left: Icon & File Info */}
-        <div 
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => onPreview(file)}
-          className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onPreview(file);
+            }
+          }}
+          aria-label={`Preview ${file.name}`}
+          className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3] rounded-xl"
         >
           <div className="w-10 h-10 rounded-xl bg-[#F8F3F0] flex items-center justify-center flex-shrink-0 mt-0.5">
             {getIcon()}
@@ -131,6 +130,7 @@ export function MobileFileCard({
           onClick={() => onDelete(file.id)}
           className="p-1.5 rounded-xl text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 transition-all tap-spring cursor-pointer"
           title="Delete file"
+          aria-label={`Delete ${file.name}`}
         >
           <Trash2 className="w-4 h-4" />
         </button>

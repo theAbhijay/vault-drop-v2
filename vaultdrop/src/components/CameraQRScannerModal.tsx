@@ -2,17 +2,16 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import jsQR from 'jsqr';
-import { 
-  X, 
-  Camera, 
-  SwitchCamera, 
-  Zap, 
-  ZapOff, 
-  Upload, 
-  AlertCircle, 
-  RefreshCw, 
+import {
+  X,
+  Camera,
+  SwitchCamera,
+  Zap,
+  ZapOff,
+  Upload,
+  AlertCircle,
+  RefreshCw,
   CheckCircle2,
-  Sparkles
 } from 'lucide-react';
 
 interface CameraQRScannerModalProps {
@@ -23,6 +22,26 @@ interface CameraQRScannerModalProps {
   subtitle?: string;
 }
 
+type BarcodeDetectorLike = {
+  detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue: string }>>;
+};
+
+type BarcodeDetectorCtor = new (options: { formats: string[] }) => BarcodeDetectorLike;
+
+function getBarcodeDetectorCtor(): BarcodeDetectorCtor | null {
+  if (typeof window === 'undefined') return null;
+  const win = window as unknown as { BarcodeDetector?: BarcodeDetectorCtor };
+  return win.BarcodeDetector ?? null;
+}
+
+/**
+ * In-browser dual-engine QR scanner (BarcodeDetector + jsQR fallback).
+ *
+ * v3 fixes: camera lifecycle is keyed on facingMode only (parent re-renders
+ * can no longer restart the stream), every async path is unmount-safe, photo
+ * decode errors always clear the spinner, the success callback fires exactly
+ * once, and the modal implements dialog semantics (role, Escape, focus restore).
+ */
 export function CameraQRScannerModal({
   isOpen,
   onClose,
@@ -43,6 +62,24 @@ export function CameraQRScannerModal({
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const detectorRef = useRef<BarcodeDetectorLike | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firedRef = useRef<boolean>(false);
+  const isScanningRef = useRef<boolean>(true);
+  const isMountedRef = useRef<boolean>(true);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  // Ref indirection for the recursive rAF loop (self-referencing useCallback
+  // captures a stale binding; scheduling through the ref always runs latest).
+  const scanLoopRef = useRef<() => void>(() => {});
+
+  // Latest callbacks in refs — identity changes from parents must never
+  // restart the camera or the scan loop.
+  const onScanRef = useRef(onScan);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onScanRef.current = onScan;
+    onCloseRef.current = onClose;
+  }, [onScan, onClose]);
 
   // Stop camera media tracks cleanly
   const stopStream = useCallback(() => {
@@ -60,11 +97,25 @@ export function CameraQRScannerModal({
       });
       streamRef.current = null;
     }
+    detectorRef.current = null;
+    isScanningRef.current = false;
   }, []);
 
-  // Handle successful QR detection
+  const clearSuccessTimer = useCallback(() => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  }, []);
+
+  // Handle successful QR detection — fires the callback exactly once, and the
+  // hand-off to the parent is cancellable if the modal closes first.
   const handleSuccess = useCallback(
     (scannedText: string) => {
+      if (firedRef.current) return;
+      firedRef.current = true;
+      isScanningRef.current = false;
+
       setIsScanning(false);
       setIsSuccess(true);
       try {
@@ -77,33 +128,37 @@ export function CameraQRScannerModal({
 
       stopStream();
 
-      setTimeout(() => {
-        onScan(scannedText);
-        onClose();
+      successTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        onScanRef.current(scannedText);
+        onCloseRef.current();
       }, 500);
     },
-    [onScan, onClose, stopStream]
+    [stopStream]
   );
 
-  // Scan frame processing loop (Hybrid: BarcodeDetector + jsQR)
+  // Scan frame processing loop (Hybrid: BarcodeDetector + jsQR).
+  // Stable identity: all mutable state lives in refs.
   const scanFrame = useCallback(async () => {
-    if (!isScanning) return;
+    if (!isMountedRef.current || !isScanningRef.current) return;
     const video = videoRef.current;
 
     if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
-      animFrameIdRef.current = requestAnimationFrame(scanFrame);
+      if (isScanningRef.current) animFrameIdRef.current = requestAnimationFrame(scanLoopRef.current);
       return;
     }
 
     let detectedText: string | null = null;
 
     // 1. ENGINE 1: Native High-Performance Hardware BarcodeDetector
-    // Supported in Chrome Android, Samsung Internet, Edge, Opera, Desktop Chrome
+    //    (constructed once per stream, not per frame)
     try {
-      const win = typeof window !== 'undefined' ? (window as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> } }) : null;
-      if (win && win.BarcodeDetector) {
-        const detector = new win.BarcodeDetector({ formats: ['qr_code'] });
-        const barcodes = await detector.detect(video);
+      if (!detectorRef.current) {
+        const Ctor = getBarcodeDetectorCtor();
+        if (Ctor) detectorRef.current = new Ctor({ formats: ['qr_code'] });
+      }
+      if (detectorRef.current) {
+        const barcodes = await detectorRef.current.detect(video);
         if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
           detectedText = barcodes[0].rawValue;
         }
@@ -113,7 +168,7 @@ export function CameraQRScannerModal({
     }
 
     // 2. ENGINE 2: Enhanced jsQR with Dual-Inversion & Center-Crop
-    if (!detectedText && canvasRef.current) {
+    if (!detectedText && canvasRef.current && !firedRef.current) {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
@@ -154,15 +209,29 @@ export function CameraQRScannerModal({
       return;
     }
 
-    animFrameIdRef.current = requestAnimationFrame(scanFrame);
-  }, [isScanning, handleSuccess]);
+    if (isScanningRef.current && !firedRef.current) {
+      animFrameIdRef.current = requestAnimationFrame(scanLoopRef.current);
+    }
+  }, [handleSuccess]);
 
-  // Start live camera stream
+  // Keep the loop ref pointing at the latest scanFrame identity.
+  useEffect(() => {
+    scanLoopRef.current = () => {
+      void scanFrame();
+    };
+  }, [scanFrame]);
+
+  // Start live camera stream. Depends only on stable callbacks + facingMode.
   const startCamera = useCallback(async () => {
     stopStream();
     setCameraError(null);
-    setIsScanning(true);
+    setHasTorch(false);
+    setTorchOn(false);
     setIsSuccess(false);
+    setIsProcessingFile(false);
+    firedRef.current = false;
+    isScanningRef.current = true;
+    setIsScanning(true);
 
     try {
       if (!navigator?.mediaDevices?.getUserMedia) {
@@ -188,6 +257,11 @@ export function CameraQRScannerModal({
         });
       }
 
+      if (!isMountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
       streamRef.current = stream;
 
       // Check for torch capability
@@ -195,19 +269,27 @@ export function CameraQRScannerModal({
       if (track) {
         const trk = track as unknown as { getCapabilities?: () => { torch?: boolean } };
         const capabilities = trk.getCapabilities?.();
-        if (capabilities && 'torch' in capabilities) {
-          setHasTorch(true);
-        } else {
-          setHasTorch(false);
-        }
+        setHasTorch(Boolean(capabilities && 'torch' in capabilities));
       }
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute('playsinline', 'true');
-        videoRef.current.setAttribute('webkit-playsinline', 'true');
-        await videoRef.current.play();
-        animFrameIdRef.current = requestAnimationFrame(scanFrame);
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        try {
+          await video.play();
+        } catch {
+          // play() can race with teardown (AbortError) — never report that
+          // as a camera failure, and make sure the stream doesn't leak.
+          if (!isScanningRef.current || !streamRef.current) {
+            stopStream();
+            return;
+          }
+        }
+        if (isScanningRef.current && !firedRef.current) {
+          animFrameIdRef.current = requestAnimationFrame(scanLoopRef.current);
+        }
       }
     } catch (err: unknown) {
       console.warn('Camera stream failed:', err);
@@ -217,7 +299,53 @@ export function CameraQRScannerModal({
         setCameraError('Unable to access camera. Please check camera permissions or upload a photo.');
       }
     }
-  }, [facingMode, scanFrame, stopStream]);
+  }, [facingMode, stopStream]);
+
+  // Modal lifecycle: open/close, focus management, Escape, modal-open counter
+  // (the PanicButton ignores Escape while any modal is open).
+  useEffect(() => {
+    if (!isOpen) return;
+
+    isMountedRef.current = true;
+    firedRef.current = false;
+    isScanningRef.current = true;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    document.body.dataset.vaultdropModalOpen = String(
+      (Number(document.body.dataset.vaultdropModalOpen) || 0) + 1
+    );
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCloseRef.current();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      isMountedRef.current = false;
+      isScanningRef.current = false;
+      clearSuccessTimer();
+      stopStream();
+      window.removeEventListener('keydown', handleKeyDown, true);
+      const openCount = Number(document.body.dataset.vaultdropModalOpen || 1) - 1;
+      if (openCount <= 0) delete document.body.dataset.vaultdropModalOpen;
+      else document.body.dataset.vaultdropModalOpen = String(openCount);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [isOpen, stopStream, clearSuccessTimer]);
+
+  // Camera start: keyed on facingMode only — parent re-renders can't restart
+  // it. Deferred one tick so no state updates happen synchronously in the
+  // effect body (and the cleanup can cancel a pending start).
+  useEffect(() => {
+    if (!isOpen) return;
+    const startTimer = setTimeout(() => {
+      void startCamera();
+    }, 0);
+    return () => clearTimeout(startTimer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, facingMode]);
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -240,68 +368,75 @@ export function CameraQRScannerModal({
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
-  // Decode from file/gallery upload fallback
+  // Decode from file/gallery upload fallback — every failure path clears the
+  // spinner, and the input is reset so the same photo can be re-picked.
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+
     if (!file) return;
+    if (firedRef.current) return;
 
     setIsProcessingFile(true);
     setCameraError(null);
 
+    const finishWith = (message: string | null) => {
+      if (!isMountedRef.current) return;
+      setIsProcessingFile(false);
+      if (message) setCameraError(message);
+    };
+
     try {
       const reader = new FileReader();
+      reader.onerror = () => finishWith('Failed to read the image file. Please try another photo.');
       reader.onload = (event) => {
         const img = new Image();
+        img.onerror = () => finishWith('This image could not be decoded. Please try another photo.');
         img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width;
-          canvas.height = img.naturalHeight || img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            setCameraError('Failed to initialize image decoder context.');
-            setIsProcessingFile(false);
-            return;
-          }
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              finishWith('Failed to initialize image decoder context.');
+              return;
+            }
 
-          ctx.drawImage(img, 0, 0);
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imgData.data, imgData.width, imgData.height, {
-            inversionAttempts: 'attemptBoth',
-          });
+            ctx.drawImage(img, 0, 0);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: 'attemptBoth',
+            });
 
-          if (code && code.data && code.data.trim().length > 0) {
-            handleSuccess(code.data.trim());
-          } else {
-            setCameraError('Could not find a valid QR code in this photo. Please try another angle.');
+            if (code && code.data && code.data.trim().length > 0) {
+              setIsProcessingFile(false);
+              handleSuccess(code.data.trim());
+            } else {
+              finishWith('Could not find a valid QR code in this photo. Please try another angle.');
+            }
+          } catch {
+            finishWith('Failed to process image file.');
           }
-          setIsProcessingFile(false);
         };
         img.src = event.target?.result as string;
       };
       reader.readAsDataURL(file);
     } catch {
-      setCameraError('Failed to process image file.');
-      setIsProcessingFile(false);
+      finishWith('Failed to process image file.');
     }
   };
-
-  useEffect(() => {
-    if (isOpen) {
-      startCamera();
-    } else {
-      stopStream();
-    }
-
-    return () => {
-      stopStream();
-    };
-  }, [isOpen, startCamera, stopStream]);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-sm sm:max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 max-h-[92vh]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="relative w-full max-w-sm sm:max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 max-h-[92vh]"
+      >
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-[#E5DCD4] flex items-center justify-between bg-[#F8F3F0]/60">
           <div className="flex items-center gap-2.5">
@@ -320,6 +455,7 @@ export function CameraQRScannerModal({
             }}
             className="p-1.5 text-[#6B6B6B] hover:text-[#1A1A1A] hover:bg-white rounded-full transition-colors tap-spring cursor-pointer"
             title="Close scanner"
+            aria-label="Close scanner"
           >
             <X className="w-5 h-5" />
           </button>
@@ -393,6 +529,8 @@ export function CameraQRScannerModal({
                   torchOn ? 'bg-amber-400 text-black' : 'bg-black/40 text-white hover:bg-black/60'
                 }`}
                 title="Toggle Flashlight"
+                aria-label={torchOn ? 'Turn off flashlight' : 'Turn on flashlight'}
+                aria-pressed={torchOn}
               >
                 {torchOn ? <Zap className="w-4 h-4 fill-current" /> : <ZapOff className="w-4 h-4" />}
               </button>
@@ -403,6 +541,7 @@ export function CameraQRScannerModal({
               onClick={flipCamera}
               className="p-2 rounded-xl bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all tap-spring cursor-pointer"
               title="Switch Front / Back Camera"
+              aria-label="Switch front or back camera"
             >
               <SwitchCamera className="w-4 h-4" />
             </button>
@@ -415,7 +554,7 @@ export function CameraQRScannerModal({
               <p className="text-[12px] sm:text-[13px] leading-relaxed text-zinc-300">{cameraError}</p>
               <button
                 type="button"
-                onClick={startCamera}
+                onClick={() => void startCamera()}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[12px] font-semibold transition-colors"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -427,13 +566,7 @@ export function CameraQRScannerModal({
 
         {/* Footer Actions */}
         <div className="p-4 sm:p-5 bg-white border-t border-[#E5DCD4] space-y-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handlePhotoUpload}
-            className="hidden"
-          />
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
 
           <button
             type="button"

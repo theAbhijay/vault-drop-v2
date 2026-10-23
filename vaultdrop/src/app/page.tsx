@@ -1,22 +1,20 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { 
-  Shield, 
-  LogOut, 
-  Search, 
-  ArrowUpDown, 
-  PackageOpen, 
-  Clock, 
+import {
+  Shield,
+  LogOut,
+  Search,
+  ArrowUpDown,
+  PackageOpen,
+  Clock,
   Sparkles,
   CheckSquare,
   Square,
   Smartphone,
-  QrCode,
   RefreshCw,
-  Camera
+  Camera,
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
@@ -24,7 +22,15 @@ import { MobileHandoffModal } from '@/components/MobileHandoffModal';
 import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
-import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip, downloadVaultFileDirectly } from '@/lib/file-helpers';
+import {
+  getUserFiles,
+  uploadVaultFile,
+  deleteVaultFile,
+  downloadFilesAsZip,
+  downloadVaultFileDirectly,
+  getVaultUsage,
+} from '@/lib/file-helpers';
+import { isValidPairToken } from '@/lib/pair-helpers';
 import { VaultFile, UserProfile } from '@/lib/types';
 import { useSessionTimer } from '@/hooks/useSessionTimer';
 
@@ -38,18 +44,22 @@ import { IdleWarningBanner } from '@/components/IdleWarningBanner';
 import { AppleColorText } from '@/components/AppleColorText';
 import { MobileFileCard } from '@/components/MobileFileCard';
 
+// The back-navigation sentinel must be pushed exactly ONCE per page load —
+// a module-level guard survives React Strict Mode's double effect invocation.
+let vaultSentinelPushed = false;
+
 export default function DashboardPage() {
   const router = useRouter();
 
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    if (typeof window !== 'undefined') {
-      return getCurrentUser();
-    }
-    return null;
-  });
+  // SSR-safe auth gate: starts null/false identically on server and client,
+  // then flips after the server-validated check completes (no hydration gap).
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [usedBytes, setUsedBytes] = useState<number>(0);
+  const [notice, setNotice] = useState<{ text: string; kind: 'info' | 'error' } | null>(null);
 
   // Scene 1: PC Modal showing QR for phone
   const [isHandoffOpen, setIsHandoffOpen] = useState<boolean>(false);
@@ -68,6 +78,42 @@ export default function DashboardPage() {
   const [previewFile, setPreviewFile] = useState<VaultFile | null>(null);
   const [isZipping, setIsZipping] = useState<boolean>(false);
 
+  const showNotice = useCallback((text: string, kind: 'info' | 'error' = 'info') => {
+    setNotice({ text, kind });
+    setTimeout(() => setNotice(null), 5000);
+  }, []);
+
+  const filesRef = useRef<VaultFile[]>([]);
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
+  const loadFiles = useCallback(
+    async (userId: string, silent = false) => {
+      if (!silent) setIsRefreshing(true);
+      try {
+        // Errors now THROW — a transient network failure keeps the previous
+        // list instead of rendering an empty vault.
+        const list = await getUserFiles(userId, filesRef.current);
+        setFiles(list);
+
+        const usage = await getVaultUsage().catch(() => null);
+        if (usage) {
+          setUsedBytes(usage.usedBytes);
+        } else {
+          setUsedBytes(list.reduce((acc, f) => acc + f.size, 0));
+        }
+      } catch (err) {
+        console.error('Failed to load files', err);
+        if (!silent) showNotice('Could not reach the vault. Check your connection and retry.', 'error');
+      } finally {
+        setLoading(false);
+        if (!silent) setIsRefreshing(false);
+      }
+    },
+    [showNotice]
+  );
+
   // Robust Device Detection
   useEffect(() => {
     const checkMobile = () => {
@@ -80,100 +126,80 @@ export default function DashboardPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Strict Auth Guard with Zero-Trust Back Navigation & BFCache Protection
+  // Strict Auth Guard — SERVER-VALIDATED (supabase.auth.getUser round-trip).
   useEffect(() => {
     let mounted = true;
-    const current = getCurrentUser();
-    if (!current) {
-      if (typeof window !== 'undefined') {
+
+    (async () => {
+      const current = await getCurrentUser();
+      if (!mounted) return;
+      setAuthChecking(false);
+
+      if (!current) {
         window.location.replace('/login');
+        return;
       }
-      return;
-    }
 
-    if (mounted) {
       setUser(current);
-      loadFiles(current.id);
-    }
 
-    // Zero-Trust Back/Forward Navigation Guard:
-    // Pushes a sentinel history state. If the user presses the browser Back button,
-    // the popstate event fires, immediately incinerating local tokens and sealing the vault.
-    if (typeof window !== 'undefined') {
-      window.history.pushState({ inVault: true }, '', window.location.href);
+      // Zero-Trust Back/Forward Navigation Guard (single sentinel, once):
+      // any Back press from the vault wipes the session immediately.
+      if (typeof window !== 'undefined' && !vaultSentinelPushed) {
+        vaultSentinelPushed = true;
+        window.history.pushState({ inVault: true }, '', window.location.href);
 
-      const handlePopState = async () => {
-        setUser(null);
-        setFiles([]);
-        await logoutUser();
-        window.location.replace('/login?reason=back_navigation');
-      };
+        const handlePopState = async () => {
+          setUser(null);
+          setFiles([]);
+          await logoutUser();
+          window.location.replace('/login?reason=back_navigation');
+        };
 
-      const handlePageShow = (e: PageTransitionEvent) => {
-        if (e.persisted) {
-          const recheck = getCurrentUser();
-          if (!recheck) {
-            window.location.replace('/login');
+        const handlePageShow = (e: PageTransitionEvent) => {
+          if (e.persisted) {
+            // BFCache revival: re-validate instead of trusting cached DOM.
+            void getCurrentUser().then((recheck) => {
+              if (!recheck) window.location.replace('/login');
+            });
           }
-        }
-      };
+        };
 
-      window.addEventListener('popstate', handlePopState);
-      window.addEventListener('pageshow', handlePageShow);
+        window.addEventListener('popstate', handlePopState);
+        window.addEventListener('pageshow', handlePageShow);
+      }
 
-      return () => {
-        mounted = false;
-        window.removeEventListener('popstate', handlePopState);
-        window.removeEventListener('pageshow', handlePageShow);
-      };
-    }
+      loadFiles(current.id);
+    })();
 
     return () => {
       mounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadFiles = async (userId: string, silent = false) => {
-    if (!silent) setIsRefreshing(true);
-    try {
-      const list = await getUserFiles(userId);
-      setFiles(list);
-    } catch (err) {
-      console.error('Failed to load files', err);
-    } finally {
-      setLoading(false);
-      if (!silent) {
-        setIsRefreshing(false);
-      }
-    }
-  };
-
   // In-app manual sync that does NOT reload the browser tab
-  const handleManualRefresh = async () => {
+  const handleManualRefresh = useCallback(async () => {
     if (!user || isRefreshing) return;
-    setIsRefreshing(true);
     await loadFiles(user.id, false);
-    setTimeout(() => setIsRefreshing(false), 500);
-  };
+  }, [user, isRefreshing, loadFiles]);
 
-  // Real-Time Cross-Device Sync Heartbeat (PC uploads appear on Smartphone automatically)
+  // Real-Time Cross-Device Sync Heartbeat — runs only while visible; every
+  // call reuses still-fresh signed URLs, so a poll is usually ONE cheap query.
   useEffect(() => {
     if (!user) return;
 
-    // 1. Automatic heartbeat sync every 8 seconds
     const interval = setInterval(() => {
-      loadFiles(user.id, true);
+      if (document.visibilityState === 'visible') {
+        loadFiles(user.id, true);
+      }
     }, 8000);
 
-    // 2. Immediate silent sync whenever phone unlocks or tab regains focus
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         loadFiles(user.id, true);
       }
     };
-    const handleFocus = () => {
-      loadFiles(user.id, true);
-    };
+    const handleFocus = () => loadFiles(user.id, true);
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
@@ -183,16 +209,14 @@ export default function DashboardPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [user]);
+  }, [user, loadFiles]);
 
   // 30-Minute Expanded Session Timer
   const handleTimeout = useCallback(async () => {
     setUser(null);
     setFiles([]);
     await logoutUser();
-    if (typeof window !== 'undefined') {
-      window.location.replace('/login?reason=timeout');
-    }
+    window.location.replace('/login?reason=timeout');
   }, []);
 
   const { secondsRemaining, isWarning, extendSession } = useSessionTimer({
@@ -205,76 +229,102 @@ export default function DashboardPage() {
     setUser(null);
     setFiles([]);
     await logoutUser();
-    if (typeof window !== 'undefined') {
-      window.location.replace('/login?reason=panic');
-    }
+    window.location.replace('/login?reason=panic');
   }, []);
 
   // Manual Vault Lock
-  const handleManualLogout = async () => {
+  const handleManualLogout = useCallback(async () => {
     setUser(null);
     setFiles([]);
     await logoutUser();
-    if (typeof window !== 'undefined') {
-      window.location.replace('/login?reason=lock');
-    }
-  };
+    window.location.replace('/login?reason=lock');
+  }, []);
 
-  // QR Scan Handler for Scene 2 (Phone inside vault authorizes PC)
-  const handleScannedQR = (scannedText: string) => {
-    try {
+  // QR Scan Handler for Scene 2 (Phone inside vault authorizes a PC).
+  // Accepts ONLY a valid 64-hex server token — anything else is rejected.
+  const handleScannedQR = useCallback(
+    (scannedText: string) => {
       const clean = scannedText.trim();
+
       let token: string | null = null;
+      let handoff: string | null = null;
       try {
         const url = new URL(clean, typeof window !== 'undefined' ? window.location.origin : undefined);
         token = url.searchParams.get('token');
+        handoff = url.searchParams.get('handoff');
       } catch {
-        const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9_-]+)/);
+        const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9]+)/);
         if (tokenMatch) token = tokenMatch[1];
+        const handoffMatch = clean.match(/[?&]handoff=([a-zA-Z0-9]+)/);
+        if (handoffMatch) handoff = handoffMatch[1];
       }
-      if (token || clean.length >= 32) {
-        const finalToken = token || clean;
-        router.push(`/pair?token=${encodeURIComponent(finalToken)}`);
+
+      if (token && isValidPairToken(token)) {
+        router.push(`/pair?token=${token}`);
         return;
       }
-      alert('Scanned QR code does not contain a valid workstation pairing token.');
-    } catch (err) {
-      console.error('QR scan error:', err);
-    }
-  };
+      if (handoff && isValidPairToken(handoff)) {
+        router.push(`/pair?handoff=${handoff}`);
+        return;
+      }
+      if (isValidPairToken(clean)) {
+        router.push(`/pair?token=${clean}`);
+        return;
+      }
+
+      showNotice('This QR code is not a valid VaultDrop pairing code.', 'error');
+    },
+    [router, showNotice]
+  );
 
   // Upload Handler with Live Progress Bar
-  const handleUpload = async (file: File, onProgress?: (percent: number) => void) => {
-    if (!user) return;
-    const res = await uploadVaultFile(user.id, file, onProgress);
-    if (res.success && res.file) {
-      setFiles((prev) => [res.file!, ...prev]);
-    } else if (res.error) {
-      throw new Error(res.error);
-    }
-  };
+  const handleUpload = useCallback(
+    async (file: File, onProgress?: (percent: number) => void) => {
+      if (!user) return;
+      const res = await uploadVaultFile(user.id, file, onProgress);
+      if (res.success && res.file) {
+        setFiles((prev) => [res.file!, ...prev]);
+        setUsedBytes((prev) => prev + res.file!.size);
+      } else if (res.error) {
+        throw new Error(res.error);
+      }
+    },
+    [user]
+  );
 
   // Delete Handler
-  const handleDelete = async (fileId: string) => {
-    if (!user) return;
-    const ok = await deleteVaultFile(user.id, fileId);
-    if (ok) {
-      setFiles((prev) => prev.filter((f) => f.id !== fileId));
-      setSelectedFileIds((prev) => {
-        const next = new Set(prev);
-        next.delete(fileId);
-        return next;
-      });
-    }
-  };
+  const handleDelete = useCallback(
+    async (fileId: string) => {
+      if (!user) return;
+      const ok = await deleteVaultFile(user.id, fileId);
+      if (ok) {
+        setFiles((prev) => prev.filter((f) => f.id !== fileId));
+        setSelectedFileIds((prev) => {
+          const next = new Set(prev);
+          next.delete(fileId);
+          return next;
+        });
+      } else {
+        showNotice('Could not delete the file — it may have already expired. Syncing…', 'error');
+        loadFiles(user.id, true);
+      }
+    },
+    [user, showNotice, loadFiles]
+  );
 
   // Download Single File (Reliable on PC & Mobile)
-  const handleDownload = async (file: VaultFile) => {
-    await downloadVaultFileDirectly(file, user?.id);
-  };
+  const handleDownload = useCallback(
+    async (file: VaultFile) => {
+      const ok = await downloadVaultFileDirectly(file);
+      if (!ok) {
+        showNotice(`Could not download "${file.name}". It may have expired — try syncing.`, 'error');
+      }
+    },
+    [showNotice]
+  );
 
   // Bulk Multi-Select Handlers
-  const handleToggleSelect = (fileId: string) => {
+  const handleToggleSelect = useCallback((fileId: string) => {
     setSelectedFileIds((prev) => {
       const next = new Set(prev);
       if (next.has(fileId)) {
@@ -284,42 +334,51 @@ export default function DashboardPage() {
       }
       return next;
     });
-  };
+  }, []);
 
-  const handleSelectAll = () => {
-    if (selectedFileIds.size === filteredFiles.length) {
-      setSelectedFileIds(new Set());
-    } else {
-      setSelectedFileIds(new Set(filteredFiles.map((f) => f.id)));
-    }
-  };
-
-  const handleBulkDownload = async () => {
+  const handleBulkDownload = useCallback(async () => {
     const selected = files.filter((f) => selectedFileIds.has(f.id));
     if (selected.length === 0) return;
     setIsZipping(true);
     try {
-      await downloadFilesAsZip(selected, `vaultdrop_${user?.username || 'archive'}.zip`, user?.id);
+      const { failed } = await downloadFilesAsZip(selected, `vaultdrop_${user?.username || 'archive'}.zip`);
+      if (failed.length > 0) {
+        showNotice(`Zip created, but ${failed.length} file(s) could not be fetched (likely expired).`, 'error');
+      }
     } catch (err) {
       console.error('Failed to create zip bundle', err);
+      showNotice('Could not create the zip bundle. Please try again.', 'error');
     } finally {
       setIsZipping(false);
     }
-  };
+  }, [files, selectedFileIds, user, showNotice]);
 
-  const handleBulkDelete = async () => {
+  // Parallel delete with per-file verification — files are removed from the
+  // UI ONLY when their deletion actually succeeded.
+  const handleBulkDelete = useCallback(async () => {
     if (!user) return;
-    for (const fileId of Array.from(selectedFileIds)) {
-      await deleteVaultFile(user.id, fileId);
-    }
-    setFiles((prev) => prev.filter((f) => !selectedFileIds.has(f.id)));
-    setSelectedFileIds(new Set());
-  };
+    const ids = Array.from(selectedFileIds);
 
-  // Total Storage Calculation
-  const totalUsedBytes = useMemo(() => {
-    return files.reduce((acc, f) => acc + f.size, 0);
-  }, [files]);
+    const results = await Promise.allSettled(ids.map((id) => deleteVaultFile(user.id, id)));
+    const succeeded = new Set<string>();
+    const failedCount = results.filter((r) => r.status !== 'fulfilled' || r.value !== true).length;
+
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value === true) succeeded.add(ids[i]);
+    });
+
+    if (succeeded.size > 0) {
+      setFiles((prev) => prev.filter((f) => !succeeded.has(f.id)));
+      setSelectedFileIds((prev) => {
+        const next = new Set(prev);
+        succeeded.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    if (failedCount > 0) {
+      showNotice(`${failedCount} file(s) could not be deleted — they may have already expired.`, 'error');
+    }
+  }, [user, selectedFileIds, showNotice]);
 
   // Filtered & Sorted Files
   const filteredFiles = useMemo(() => {
@@ -354,9 +413,26 @@ export default function DashboardPage() {
     return map;
   }, [files]);
 
-  // If user is not authenticated, return null while router redirects
-  if (!user) {
-    return null;
+  const handleSelectAll = useCallback(() => {
+    if (selectedFileIds.size === filteredFiles.length) {
+      setSelectedFileIds(new Set());
+    } else {
+      setSelectedFileIds(new Set(filteredFiles.map((f) => f.id)));
+    }
+  }, [selectedFileIds, filteredFiles]);
+
+  // While the server-validated auth check is running, render a neutral shell
+  // (identical on server and client — zero hydration mismatch).
+  if (authChecking || !user) {
+    return (
+      <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center">
+        <div
+          className="w-8 h-8 rounded-full border-2 border-[#014BAA] border-t-transparent animate-spin"
+          role="status"
+          aria-label="Loading VaultDrop"
+        />
+      </div>
+    );
   }
 
   // Format session time
@@ -413,11 +489,11 @@ export default function DashboardPage() {
 
             {/* Storage Meter - Visible in header on desktop (moved to body on mobile) */}
             <div className="hidden sm:block">
-              <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
+              <StorageMeter usedBytes={usedBytes} totalCapMb={user.storageCapMb} />
             </div>
 
             {/* Session TTL Countdown (Desktop only) */}
-            <div 
+            <div
               title="30-minute session lifetime"
               className="hidden lg:flex items-center gap-1.5 px-3 py-2 bg-white/90 rounded-xl border border-[#E5DCD4]/90 text-[12px] font-mono text-[#1A1A1A] shadow-xs"
             >
@@ -445,6 +521,21 @@ export default function DashboardPage() {
 
       {/* 2. Main Dashboard Content */}
       <main className="max-w-5xl w-full mx-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6 flex-1">
+        {/* Non-blocking operation notices (replaces alert()) */}
+        {notice && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`p-3 rounded-2xl border text-[13px] animate-in fade-in ${
+              notice.kind === 'error'
+                ? 'bg-red-50 border-red-200 text-[#C8102E]'
+                : 'bg-[#E6EEF7] border-[#0071E3]/20 text-[#014BAA]'
+            }`}
+          >
+            {notice.text}
+          </div>
+        )}
+
         {/* Mobile-Only Status Card (Declutters header so no text cuts off on small phones) */}
         <div className="sm:hidden p-3 bg-white rounded-2xl border border-[#E5DCD4] shadow-xs space-y-2.5">
           <div className="flex items-center justify-between text-[12px]">
@@ -456,14 +547,17 @@ export default function DashboardPage() {
               <span>TTL: {sessionTimeString}</span>
             </div>
           </div>
-          <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
+          <StorageMeter usedBytes={usedBytes} totalCapMb={user.storageCapMb} />
         </div>
 
         {/* Status Banner */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 p-3 sm:p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[12px] sm:text-[13px] text-[#6B6B6B] shadow-apple">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-            <span>Zero credentials typed on shared hardware • <AppleColorText text="Zero Trace Active" className="font-semibold" mode="chars" /></span>
+            <span>
+              Zero credentials typed on shared hardware •{' '}
+              <AppleColorText text="Zero Trace Active" className="font-semibold" mode="chars" />
+            </span>
           </div>
           <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] text-[#014BAA] font-medium font-mono">
             <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
@@ -500,6 +594,7 @@ export default function DashboardPage() {
               <button
                 key={chip.id}
                 onClick={() => setActiveFilter(chip.id as VaultFile['category'] | 'all')}
+                aria-pressed={activeFilter === chip.id}
                 className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-[12px] sm:text-[13px] font-medium transition-all tap-spring flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                   activeFilter === chip.id
                     ? 'bg-[#014BAA] text-white shadow-sm'
@@ -527,6 +622,7 @@ export default function DashboardPage() {
                 placeholder="Search files..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search files"
                 className="w-full pl-9 pr-3 py-2 text-[12px] sm:text-[13px] bg-white border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA]"
               />
             </div>
@@ -534,6 +630,7 @@ export default function DashboardPage() {
             <div className="relative">
               <select
                 value={sortBy}
+                aria-label="Sort files"
                 onChange={(e) => setSortBy(e.target.value as 'soonest' | 'newest' | 'size')}
                 className="appearance-none bg-white border border-[#E5DCD4] text-[12px] sm:text-[13px] font-medium text-[#1A1A1A] pl-8 pr-8 py-2 rounded-xl focus:outline-none focus:border-[#014BAA] cursor-pointer"
               >
@@ -563,9 +660,7 @@ export default function DashboardPage() {
                 <span>Select All ({filteredFiles.length})</span>
               </button>
 
-              <span className="font-mono text-[11px] sm:text-[12px] text-[#9B9B9B]">
-                24h Auto-Destruction Active
-              </span>
+              <span className="font-mono text-[11px] sm:text-[12px] text-[#9B9B9B]">24h Auto-Destruction Active</span>
             </div>
           )}
 
@@ -616,7 +711,8 @@ export default function DashboardPage() {
               </div>
               <h3 className="text-[17px] sm:text-[18px] font-bold text-[#1A1A1A]">Your vault is empty</h3>
               <p className="text-[13px] text-[#6B6B6B] max-w-sm mx-auto">
-                Drag files onto the drop zone above or click to browse. Files are encrypted and automatically destroyed after 24 hours.
+                Drag files onto the drop zone above or click to browse. Files live in a private,
+                encrypted-at-rest vault and are automatically destroyed after 24 hours.
               </p>
             </div>
           )}
@@ -627,11 +723,7 @@ export default function DashboardPage() {
       <Footer />
 
       {/* 4. Modals & Action Overlays */}
-      <FilePreviewModal
-        file={previewFile}
-        onClose={() => setPreviewFile(null)}
-        onDownload={handleDownload}
-      />
+      <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownload} />
 
       <BulkActionBar
         selectedFiles={files.filter((f) => selectedFileIds.has(f.id))}
@@ -643,24 +735,14 @@ export default function DashboardPage() {
 
       {/* 5. Inactivity Warning Banner (Final 2 minutes) */}
       {isWarning && (
-        <IdleWarningBanner
-          secondsRemaining={secondsRemaining}
-          onExtend={extendSession}
-          onLogout={handleManualLogout}
-        />
+        <IdleWarningBanner secondsRemaining={secondsRemaining} onExtend={extendSession} onLogout={handleManualLogout} />
       )}
 
       {/* 6. Floating Panic Wipe Button: Desktop ONLY (Hidden on mobile per user request) */}
       {!isMobileDevice && <PanicButton onPanic={handlePanicWipe} />}
 
       {/* 7. Scene 1 Modal: PC shows dynamic QR for smartphone to scan */}
-      {user && (
-        <MobileHandoffModal
-          isOpen={isHandoffOpen}
-          onClose={() => setIsHandoffOpen(false)}
-          user={user}
-        />
-      )}
+      <MobileHandoffModal isOpen={isHandoffOpen} onClose={() => setIsHandoffOpen(false)} />
 
       {/* 8. Scene 2 Modal: Smartphone in-browser camera scanner */}
       <CameraQRScannerModal

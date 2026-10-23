@@ -22,19 +22,18 @@ jobs:
             exit 1
           fi
 
-          echo "Pinging Supabase at $SUPABASE_URL to prevent project pause..."
-          
-          # Query a lightweight public RPC endpoint (is_username_taken) to wake the database
+          # The project URL is a secret — never echo it into public CI logs.
+          echo "Pinging Supabase project to prevent pause..."
+
+          # Query the dedicated lightweight ping RPC (vaultdrop_ping) to wake the database
           HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
-            -X POST "$SUPABASE_URL/rest/v1/rpc/is_username_taken" \
+            -X POST "$SUPABASE_URL/rest/v1/rpc/vaultdrop_ping" \
             -H "apikey: $SUPABASE_ANON_KEY" \
             -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"p_username": "keepalive_ping"}')
+            -d '{}')
 
           echo "HTTP Response Status: $HTTP_STATUS"
-          cat response.json
-          echo ""
 
           if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
             echo "::notice::Supabase project successfully pinged! 7-day inactivity timer reset."
