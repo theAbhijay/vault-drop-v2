@@ -57,13 +57,19 @@ export interface CreatedLoginSession {
 export async function createLoginSession(): Promise<CreatedLoginSession | null> {
   if (!(isSupabaseConfigured && supabase)) return null;
   try {
-    const { data, error } = await withTimeout(
-      supabase.rpc('create_login_session'),
-      5000
-    );
-    if (error || !data?.token) return null;
+    const { data, error } = await withTimeout(supabase.rpc('create_login_session'), 5000);
+    if (error) {
+      // PGRST202 = RPC not found → the v3 schema has not been deployed to
+      // Supabase yet. Surface the reason in the console for diagnosis.
+      console.error(
+        `[VaultDrop] create_login_session failed (${error.code ?? 'no code'}): ${error.message}`
+      );
+      return null;
+    }
+    if (!data?.token) return null;
     return { token: data.token as string, pin: data.pin as string, expiresAt: data.expiresAt as string };
-  } catch {
+  } catch (err) {
+    console.error('[VaultDrop] create_login_session network failure:', err);
     return null;
   }
 }

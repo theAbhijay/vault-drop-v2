@@ -41,6 +41,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
   const isTransitioningRef = useRef<boolean>(false);
   const isMountedRef = useRef<boolean>(true);
   const generationRef = useRef<number>(0);
+  const generationFailuresRef = useRef<number>(0);
   // Ref indirection so the self-rotating timers always invoke the LATEST
   // generateNewQR identity instead of capturing a not-yet-declared binding.
   const rotateRef = useRef<() => void>(() => {});
@@ -119,6 +120,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
         }
 
         activeTokenRef.current = session.token;
+        generationFailuresRef.current = 0;
         setPin(session.pin);
 
         const styledSvg = await renderChromaticQR(buildPairUrl(session.token));
@@ -184,7 +186,17 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       } catch (err) {
         console.error('Failed to generate QR session:', err);
         if (!isMountedRef.current || generation !== generationRef.current) return;
-        // Bounded retry with backoff; after that, a visible error state.
+
+        // Bounded retry with backoff — after repeated failures show a real
+        // error state instead of spinning forever. The most common cause is
+        // the v3 database schema not being deployed to Supabase yet.
+        generationFailuresRef.current += 1;
+        if (generationFailuresRef.current >= 2) {
+          setStatus('error');
+          setIsRefreshing(false);
+          return;
+        }
+
         retryTimerRef.current = setTimeout(() => {
           if (isMountedRef.current && !isTransitioningRef.current) rotateRef.current();
         }, 2500);
@@ -233,11 +245,18 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
               <p className="text-[13px] text-[#6B6B6B]">Unlocking vault terminal...</p>
             </div>
           ) : status === 'error' ? (
-            <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-3 bg-amber-50 rounded-xl">
+            <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-3 bg-amber-50 rounded-xl px-5">
               <TriangleAlert className="w-10 h-10 text-[#B25000]" />
               <p className="text-[14px] font-semibold text-[#1A1A1A]">Could not reach VaultDrop</p>
+              <p className="text-[11px] text-[#6B6B6B] text-center leading-relaxed">
+                Check your connection, and make sure the latest <span className="font-mono">supabase_schema.sql</span> has
+                been run in your Supabase SQL Editor (see the browser console for the exact reason).
+              </p>
               <button
-                onClick={() => void generateNewQR(false)}
+                onClick={() => {
+                  generationFailuresRef.current = 0;
+                  void generateNewQR(false);
+                }}
                 className="mt-1 px-4 py-2 bg-[#0071E3] hover:bg-[#014BAA] text-white text-[13px] font-semibold rounded-full transition-colors cursor-pointer"
               >
                 Try Again
