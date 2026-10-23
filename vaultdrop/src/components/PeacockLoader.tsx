@@ -31,15 +31,15 @@ export function PeacockLoader({
               margin-left: -11px;
               border-radius: 50%;
               will-change: transform;
-              animation: peacockBounce 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+              animation: peacockBounce 0.55s cubic-bezier(0.4, 0, 0.2, 1) infinite;
             }
 
             .dot-1 { left: 9%;  background: #FFB81C; animation-delay: 0s; }
-            .dot-2 { left: 25%; background: #FF6A13; animation-delay: 0.1s; }
-            .dot-3 { left: 41%; background: #E2231A; animation-delay: 0.2s; }
-            .dot-4 { left: 57%; background: #7B2C8E; animation-delay: 0.3s; }
-            .dot-5 { left: 73%; background: #0067B1; animation-delay: 0.4s; }
-            .dot-6 { left: 89%; background: #00A651; animation-delay: 0.5s; }
+            .dot-2 { left: 25%; background: #FF6A13; animation-delay: 0.07s; }
+            .dot-3 { left: 41%; background: #E2231A; animation-delay: 0.14s; }
+            .dot-4 { left: 57%; background: #7B2C8E; animation-delay: 0.21s; }
+            .dot-5 { left: 73%; background: #0067B1; animation-delay: 0.28s; }
+            .dot-6 { left: 89%; background: #00A651; animation-delay: 0.35s; }
 
             @keyframes peacockBounce {
               0%, 100% {

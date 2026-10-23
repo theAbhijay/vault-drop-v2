@@ -30,7 +30,7 @@ export function validateUsername(username: string): { valid: boolean; error?: st
  * Supabase Auth requires an internal email, but users exclusively see and use their username.
  */
 export function usernameToInternalEmail(username: string): string {
-  return `${username.trim().toLowerCase()}@vaultdrop.internal`;
+  return `${username.trim().toLowerCase()}@vaultdrop.com`;
 }
 
 /**
@@ -124,6 +124,22 @@ export async function registerWithUsername(
         success: false,
         error: 'Username already registered. Please sign in or choose a different username.',
       };
+    }
+
+    // Ensure active session if Supabase did not attach one to signUp
+    if (!authData.session) {
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: internalEmail,
+        password: password,
+      });
+
+      if (signInErr && signInErr.message.toLowerCase().includes('email not confirmed')) {
+        return {
+          success: false,
+          error:
+            'Account created, but Email Confirmation is enabled in Supabase. In Supabase Dashboard -> Authentication -> Providers -> Email, scroll to the top, toggle OFF "Confirm email", and save.',
+        };
+      }
     }
 
     // 3. Touch user activity to initialize 30-day active timer
