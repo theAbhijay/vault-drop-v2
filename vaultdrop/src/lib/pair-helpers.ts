@@ -149,7 +149,7 @@ export async function checkPairingStatus(token: string): Promise<PairingSession 
       const res = await withTimeout(
         supabase
           .from('pairing_sessions')
-          .select('id, qr_token, status, created_at, expires_at, user_id, consumed_at')
+          .select('id, qr_token, status, created_at, expires_at, user_id, consumed_at, device_info')
           .eq('qr_token', token)
           .maybeSingle(),
         2500
@@ -165,13 +165,37 @@ export async function checkPairingStatus(token: string): Promise<PairingSession 
         }
 
         let username: string | undefined;
-        if (data.user_id) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('id', data.user_id)
-            .maybeSingle();
-          username = profile?.username;
+        let boundUserId = data.user_id;
+
+        // 1. Direct metadata extraction from device_info (always readable by anonymous PC terminal)
+        if (data.device_info) {
+          try {
+            const meta = JSON.parse(data.device_info);
+            if (meta.username && meta.username.toLowerCase() !== 'student') {
+              username = meta.username;
+            }
+            if (meta.userId) {
+              boundUserId = meta.userId;
+            }
+          } catch {
+            // ignore non-JSON device_info
+          }
+        }
+
+        // 2. Fallback query to profiles if user_id exists
+        if (!username && data.user_id) {
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('username')
+              .eq('id', data.user_id)
+              .maybeSingle();
+            if (profile?.username && profile.username.toLowerCase() !== 'student') {
+              username = profile.username;
+            }
+          } catch {
+            // ignore
+          }
         }
 
         return {
@@ -181,7 +205,7 @@ export async function checkPairingStatus(token: string): Promise<PairingSession 
           createdAt: data.created_at,
           expiresAt: data.expires_at,
           consumedAt: data.consumed_at,
-          userId: data.user_id,
+          userId: boundUserId,
           username,
         };
       }
@@ -209,21 +233,27 @@ export async function checkPairingStatus(token: string): Promise<PairingSession 
 }
 
 /**
- * Approve a pairing session from the student's phone.
- * Calls hardened v2 RPC function `approve_pairing_session(p_qr_token, p_device_info)`.
- * Employs row-level locking (FOR UPDATE) inside PostgreSQL to prevent session hijacking.
+ * Approve a pairing session from the smartphone node.
+ * Binds authentic user credentials into PostgreSQL pairing session.
  */
 export async function approvePairingSession(
   token: string,
   user: UserProfile,
   deviceInfo = 'Mobile Scanner'
 ): Promise<{ success: boolean; error?: string }> {
+  const metadataString = JSON.stringify({
+    username: user.username,
+    userId: user.id,
+    device: deviceInfo,
+    approvedAt: new Date().toISOString(),
+  });
+
   if (isSupabaseConfigured && supabase) {
     try {
       const res = await withTimeout(
         supabase.rpc('approve_pairing_session', {
           p_qr_token: token,
-          p_device_info: deviceInfo,
+          p_device_info: metadataString,
         }),
         4000
       );
@@ -251,13 +281,13 @@ export async function approvePairingSession(
     try {
       const session: PairingSession = JSON.parse(raw);
       if (new Date(session.expiresAt).getTime() <= Date.now()) {
-        return { success: false, error: 'QR Code has expired. Please refresh the lab screen.' };
+        return { success: false, error: 'QR Code has expired. Please refresh the PC screen.' };
       }
 
       session.status = 'approved';
       session.userId = user.id;
       session.username = user.username;
-      session.deviceInfo = deviceInfo;
+      session.deviceInfo = metadataString;
 
       localStorage.setItem(`${MOCK_PAIRING_PREFIX}${token}`, JSON.stringify(session));
       return { success: true };

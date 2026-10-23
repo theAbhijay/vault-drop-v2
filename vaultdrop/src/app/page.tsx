@@ -80,12 +80,14 @@ export default function DashboardPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Strict Auth Guard with BFCache Protection (zero Chrome loop/freeze)
+  // Strict Auth Guard with Zero-Trust Back Navigation & BFCache Protection
   useEffect(() => {
     let mounted = true;
     const current = getCurrentUser();
     if (!current) {
-      router.replace('/login');
+      if (typeof window !== 'undefined') {
+        window.location.replace('/login');
+      }
       return;
     }
 
@@ -94,22 +96,42 @@ export default function DashboardPage() {
       loadFiles(current.id);
     }
 
-    // Only if page was restored from cache (persisted) after logout
-    const handlePageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) {
-        const recheck = getCurrentUser();
-        if (!recheck) {
-          router.replace('/login');
-        }
-      }
-    };
+    // Zero-Trust Back/Forward Navigation Guard:
+    // Pushes a sentinel history state. If the user presses the browser Back button,
+    // the popstate event fires, immediately incinerating local tokens and sealing the vault.
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ inVault: true }, '', window.location.href);
 
-    window.addEventListener('pageshow', handlePageShow);
+      const handlePopState = async () => {
+        setUser(null);
+        setFiles([]);
+        await logoutUser();
+        window.location.replace('/login?reason=back_navigation');
+      };
+
+      const handlePageShow = (e: PageTransitionEvent) => {
+        if (e.persisted) {
+          const recheck = getCurrentUser();
+          if (!recheck) {
+            window.location.replace('/login');
+          }
+        }
+      };
+
+      window.addEventListener('popstate', handlePopState);
+      window.addEventListener('pageshow', handlePageShow);
+
+      return () => {
+        mounted = false;
+        window.removeEventListener('popstate', handlePopState);
+        window.removeEventListener('pageshow', handlePageShow);
+      };
+    }
+
     return () => {
       mounted = false;
-      window.removeEventListener('pageshow', handlePageShow);
     };
-  }, [router]);
+  }, []);
 
   const loadFiles = async (userId: string, silent = false) => {
     if (!silent) setIsRefreshing(true);
@@ -165,9 +187,13 @@ export default function DashboardPage() {
 
   // 30-Minute Expanded Session Timer
   const handleTimeout = useCallback(async () => {
+    setUser(null);
+    setFiles([]);
     await logoutUser();
-    router.push('/login?reason=timeout');
-  }, [router]);
+    if (typeof window !== 'undefined') {
+      window.location.replace('/login?reason=timeout');
+    }
+  }, []);
 
   const { secondsRemaining, isWarning, extendSession } = useSessionTimer({
     onTimeout: handleTimeout,
@@ -176,13 +202,22 @@ export default function DashboardPage() {
 
   // Panic Wipe: Instant 0ms screen wipe
   const handlePanicWipe = useCallback(async () => {
+    setUser(null);
+    setFiles([]);
     await logoutUser();
-    router.push('/login?reason=panic');
-  }, [router]);
+    if (typeof window !== 'undefined') {
+      window.location.replace('/login?reason=panic');
+    }
+  }, []);
 
+  // Manual Vault Lock
   const handleManualLogout = async () => {
+    setUser(null);
+    setFiles([]);
     await logoutUser();
-    router.push('/login');
+    if (typeof window !== 'undefined') {
+      window.location.replace('/login?reason=lock');
+    }
   };
 
   // QR Scan Handler for Scene 2 (Phone inside vault authorizes PC)

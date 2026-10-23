@@ -28,7 +28,6 @@ import { PeacockLoader } from '@/components/PeacockLoader';
 import { Footer } from '@/components/Footer';
 import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
-import { findTokenByPin } from '@/lib/pair-helpers';
 
 type GatewayTab = 'qr' | 'password';
 
@@ -45,11 +44,6 @@ function LoginContent() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Workstation PIN Fallback (for users without Google Lens or camera permissions)
-  const [workstationPin, setWorkstationPin] = useState<string>('');
-  const [isVerifyingPin, setIsVerifyingPin] = useState<boolean>(false);
-  const [pinError, setPinError] = useState<string | null>(null);
-
   // Mobile Device Detection for Scene 1
   const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
@@ -58,6 +52,7 @@ function LoginContent() {
   const [showPanicAlert, setShowPanicAlert] = useState<boolean>(reason === 'panic');
   const [showTimeoutAlert, setShowTimeoutAlert] = useState<boolean>(reason === 'timeout');
   const [showNavAlert, setShowNavAlert] = useState<boolean>(reason === 'back_navigation');
+  const [showLockAlert, setShowLockAlert] = useState<boolean>(reason === 'lock');
 
   useEffect(() => {
     const checkMobile = () => {
@@ -70,23 +65,20 @@ function LoginContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Panic Wipe Alert: Strictly disappears after 10 seconds per user request
+  // Zero-Trust Security: Synchronously purge any active tokens when reason is provided
   useEffect(() => {
-    if (reason === 'panic') {
-      setShowPanicAlert(true);
+    if (reason) {
+      logoutUser();
       const timer = setTimeout(() => {
         setShowPanicAlert(false);
+        setShowTimeoutAlert(false);
+        setShowNavAlert(false);
+        setShowLockAlert(false);
         if (typeof window !== 'undefined') {
           window.history.replaceState({}, '', '/login');
         }
       }, 10000); // 10 seconds auto-dismiss
       return () => clearTimeout(timer);
-    }
-  }, [reason]);
-
-  useEffect(() => {
-    if (reason) {
-      logoutUser();
     } else if (getCurrentUser()) {
       router.push('/');
     }
@@ -131,29 +123,7 @@ function LoginContent() {
     }
   };
 
-  const handlePinSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPinError(null);
-    const cleaned = workstationPin.trim().toUpperCase();
-    if (cleaned.length < 4) {
-      setPinError('Please enter the 6-character PIN shown on your PC screen.');
-      return;
-    }
 
-    setIsVerifyingPin(true);
-    try {
-      const token = await findTokenByPin(cleaned);
-      if (token) {
-        router.push(`/pair?token=${encodeURIComponent(token)}`);
-      } else {
-        setPinError('Workstation PIN not found or expired. Check your PC screen.');
-      }
-    } catch {
-      setPinError('Failed to verify PIN. Please try again.');
-    } finally {
-      setIsVerifyingPin(false);
-    }
-  };
 
   const handleScannedQR = (scannedText: string) => {
     try {
@@ -277,6 +247,12 @@ function LoginContent() {
             <span>Session Terminated. Browser navigation detected — vault sealed immediately for security.</span>
           </div>
         )}
+        {showLockAlert && (
+          <div className="w-full max-w-md mb-4 p-3.5 bg-[#014BAA]/10 border border-[#014BAA]/20 rounded-2xl flex items-center gap-3 text-[13px] text-[#014BAA] animate-in fade-in">
+            <ShieldCheck className="w-4.5 h-4.5 text-[#014BAA] flex-shrink-0" />
+            <span>Vault locked successfully. All active tokens and local cache incinerated.</span>
+          </div>
+        )}
 
         {/* THE CENTER GATEWAY BOX */}
         <div className="w-full max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg p-5 sm:p-7 transition-all duration-300">
@@ -321,7 +297,7 @@ function LoginContent() {
           {activeTab === 'qr' && (
             <div key="tab-qr" className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
               {isMobileDevice ? (
-                /* Scene 1: Smartphone Login Screen -> Blurred Mock QR with Scan Box & Universal Fallback */
+                /* Scene 1: Smartphone Login Screen -> Direct Camera QR Scanner */
                 <div className="space-y-4 text-center">
                   <div className="relative w-full max-w-[280px] h-[260px] mx-auto rounded-3xl overflow-hidden border border-[#E5DCD4] bg-[#F8F3F0] flex items-center justify-center p-3">
                     {/* Blurred Mock Background QR */}
@@ -331,78 +307,33 @@ function LoginContent() {
                       </div>
                     </div>
 
-                    {/* Centered Overlay Action Box for Scene 1 (Live Browser Camera QR Scanner) */}
-                    <div className="relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E5DCD4] shadow-apple p-4 space-y-2.5 max-w-[240px]">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-sm">
-                        <Camera className="w-5 h-5" />
+                    {/* Centered Overlay Action Box */}
+                    <div className="relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E5DCD4] shadow-apple p-5 space-y-3 max-w-[240px]">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-sm">
+                        <Camera className="w-6 h-6" />
                       </div>
 
-                      <div className="space-y-0.5">
-                        <h4 className="text-[14px] font-bold text-[#1A1A1A] tracking-tight">Camera Scanner</h4>
+                      <div className="space-y-1 text-center">
+                        <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Camera Scanner</h4>
                         <p className="text-[11px] text-[#6B6B6B] leading-tight">
-                          Point camera at the QR code on your PC monitor to log in instantly
+                          Point camera at the QR code displayed on your PC monitor to log in
                         </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => setIsScannerOpen(true)}
-                        className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
+                        className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        <Camera className="w-3.5 h-3.5" />
-                        <span>Open Camera Scanner</span>
+                        <Camera className="w-4 h-4" />
+                        <span>Open Camera</span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Manual 6-Character Workstation PIN Fallback */}
-                  <div className="max-w-[280px] mx-auto p-3.5 bg-white rounded-2xl border border-[#E5DCD4] shadow-2xs space-y-2.5 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#1A1A1A]">
-                        Or Enter Workstation PIN
-                      </span>
-                      <span className="text-[10px] font-mono text-[#014BAA] bg-[#014BAA]/10 px-1.5 py-0.5 rounded">
-                        6-Digit PIN
-                      </span>
-                    </div>
-
-                    <form onSubmit={handlePinSubmit} className="space-y-2">
-                      <div className="relative">
-                        <input
-                          type="text"
-                          maxLength={8}
-                          value={workstationPin}
-                          onChange={(e) => setWorkstationPin(e.target.value.toUpperCase())}
-                          placeholder="e.g. B9C3F1"
-                          className="w-full px-3 py-2 text-[14px] font-mono tracking-widest text-center font-bold uppercase bg-[#F8F3F0] border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all"
-                        />
-                      </div>
-
-                      {pinError && (
-                        <p className="text-[11px] text-[#C8102E] leading-tight font-medium">
-                          {pinError}
-                        </p>
-                      )}
-
-                      <button
-                        type="submit"
-                        disabled={isVerifyingPin || workstationPin.trim().length === 0}
-                        className="w-full py-2 bg-[#014BAA] hover:bg-[#013A85] disabled:opacity-50 text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        {isVerifyingPin ? (
-                          <span>Verifying PIN...</span>
-                        ) : (
-                          <>
-                            <span>Pair with Workstation</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </>
-                        )}
-                      </button>
-                    </form>
-                    <p className="text-[10px] text-[#9B9B9B] leading-tight text-center">
-                      Find the 6-character PIN displayed below the QR code on your PC.
-                    </p>
-                  </div>
+                  <p className="text-[12px] text-[#6B6B6B] max-w-xs mx-auto leading-relaxed">
+                    Point your camera at the PC screen to authorize the session with zero keyboard strokes!
+                  </p>
                 </div>
               ) : (
                 /* PC Monitor: Real Sharp Chromatic QR Code */
