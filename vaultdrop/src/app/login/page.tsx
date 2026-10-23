@@ -507,8 +507,8 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center">
-          <p className="text-[13px] text-[#6B6B6B]">Loading VaultDrop...</p>
+        <div className="min-h-screen bg-[#F8F3F0]">
+          <PeacockLoader message="Loading VaultDrop..." submessage="Zero-Trace Ephemeral Protocol" />
         </div>
       }
     >

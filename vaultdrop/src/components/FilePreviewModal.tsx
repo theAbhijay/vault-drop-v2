@@ -14,6 +14,12 @@ interface FilePreviewModalProps {
 export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModalProps) {
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const downloadButtonRef = useRef<HTMLButtonElement | null>(null);
+  // onClose in a ref: parents pass inline lambdas whose identity changes on
+  // every render (the dashboard re-renders each second with the TTL ticker).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!file) return;
@@ -27,7 +33,7 @@ export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModal
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
@@ -39,7 +45,7 @@ export function FilePreviewModal({ file, onClose, onDownload }: FilePreviewModal
       else document.body.dataset.vaultdropModalOpen = String(openCount);
       previousFocusRef.current?.focus?.();
     };
-  }, [file, onClose]);
+  }, [file]);
 
   if (!file) return null;
 

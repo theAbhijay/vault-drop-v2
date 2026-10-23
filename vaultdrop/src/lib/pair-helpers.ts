@@ -1,11 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey, exchangeRefreshToken } from './supabase';
-import {
-  fetchUserProfile,
-  establishSessionWindow,
-  usernameToInternalEmail,
-  validateUsername,
-} from './auth-helpers';
+import { supabase, isSupabaseConfigured, exchangeRefreshToken } from './supabase';
+import { fetchUserProfile, establishSessionWindow, validateUsername, usernameToInternalEmail } from './auth-helpers';
 import { ConsumedLoginSession, LoginSessionStatus, ResolvedHandoff, UserProfile } from './types';
 
 /**
@@ -25,6 +19,17 @@ export function buildPairUrl(token: string): string {
 
 export function buildHandoffUrl(token: string): string {
   return `${typeof window !== 'undefined' ? window.location.origin : ''}/pair?handoff=${token}`;
+}
+
+/**
+ * Normalize a server timestamp to an offset-anchored ISO string. A naive
+ * value (no "Z" / "+00:00") would be parsed by JS as LOCAL time — wrong by
+ * the user's UTC offset — so anchor anything naive to UTC explicitly.
+ */
+function normalizeServerTimestamp(value: string): string {
+  const trimmed = String(value ?? '').trim();
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(trimmed)) return trimmed;
+  return `${trimmed}Z`;
 }
 
 /** Race a call against a timeout so a dead network can't freeze the UI. */
@@ -49,7 +54,6 @@ function buildDeviceInfo(): string {
 
 export interface CreatedLoginSession {
   token: string;
-  pin: string;
   expiresAt: string;
 }
 
@@ -67,14 +71,17 @@ export async function createLoginSession(): Promise<CreatedLoginSession | null> 
       return null;
     }
     if (!data?.token) return null;
-    return { token: data.token as string, pin: data.pin as string, expiresAt: data.expiresAt as string };
+    return {
+      token: data.token as string,
+      expiresAt: normalizeServerTimestamp(data.expiresAt),
+    };
   } catch (err) {
     console.error('[VaultDrop] create_login_session network failure:', err);
     return null;
   }
 }
 
-/** Step 2 (PC, ~1s polling): status only — never leaks identity. */
+/** Step 2 (PC, ~1.5s polling): status only — never leaks identity. */
 export async function getLoginSessionStatus(token: string): Promise<LoginSessionStatus | null> {
   if (!(isSupabaseConfigured && supabase)) return null;
   try {
@@ -83,21 +90,79 @@ export async function getLoginSessionStatus(token: string): Promise<LoginSession
       3000
     );
     if (error || !data) return null;
-    return data as LoginSessionStatus;
+    const status = data as LoginSessionStatus;
+    if (status.expiresAt) {
+      return { ...status, expiresAt: normalizeServerTimestamp(status.expiresAt) };
+    }
+    return status;
   } catch {
     return null;
   }
 }
 
 /**
- * Step 3 (phone): approve the workstation with the account password.
+ * Step 3 (phone): approve the workstation with ONE TAP — no password.
  *
- * The password is only ever typed on the user's PERSONAL device. A throwaway
- * in-memory Supabase client signs in and mints a dedicated workstation session;
- * its one-time refresh token is deposited for the PC. The phone's own session
- * family is never rotated, and the PC receives an independent real session.
+ * The phone must simply BE signed in (its own personal device). We deposit
+ * the phone's CURRENT session refresh token via the one-time broker; the
+ * workstation exchanges it for its own short-lived session and never
+ * refreshes afterwards (its 30-minute TTL ends first).
+ *
+ * Token-chain reconciliation: after the workstation consumes the deposited
+ * token (rotating it), we refresh this phone's session INSIDE GoTrue's
+ * refresh-token reuse grace — both devices then hold the same successor
+ * token, so the phone stays signed in. Best-effort and failure-safe.
  */
-export async function approveLoginSessionWithCredentials(
+export async function approveLoginSession(token: string): Promise<{ success: boolean; error?: string }> {
+  if (!(isSupabaseConfigured && supabase)) {
+    return { success: false, error: 'VaultDrop is not configured.' };
+  }
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const session = sessionData?.session;
+  if (!session?.refresh_token) {
+    return { success: false, error: 'You are not signed in on this phone.' };
+  }
+
+  const { data: approved, error: rpcError } = await supabase.rpc('approve_login_session', {
+    p_token: token,
+    p_refresh_token: session.refresh_token,
+    p_device_info: buildDeviceInfo(),
+  });
+
+  if (rpcError || approved !== true) {
+    return {
+      success: false,
+      error: 'This code is invalid, expired, or already used. Refresh the workstation screen and scan again.',
+    };
+  }
+
+  // Background reconciliation — never blocks the approval UI.
+  void (async () => {
+    try {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await getLoginSessionStatus(token);
+        // 'unknown' = row deleted → the workstation consumed the token.
+        // 'expired' = window lapsed; refreshing is then just a normal rotation.
+        if (!status || status.status === 'unknown' || status.status === 'expired') break;
+      }
+      await supabase.auth.refreshSession();
+    } catch {
+      // Best effort: worst case this phone re-authenticates on its next visit.
+    }
+  })();
+
+  return { success: true };
+}
+
+/**
+ * Sign-in + approve in one step (phone was NOT signed in when it scanned).
+ * The username/password are typed on the personal phone only — after this
+ * first sign-in, every future QR approval is a single tap.
+ */
+export async function signInAndApprove(
   token: string,
   username: string,
   password: string
@@ -107,60 +172,19 @@ export async function approveLoginSessionWithCredentials(
   }
 
   const validation = validateUsername(username);
-  if (!validation.valid) {
+  if (!validation.valid || !validation.cleanUsername) {
     return { success: false, error: validation.error };
   }
 
-  const memoryClient = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  const { data: signInData, error: signInError } = await memoryClient.auth.signInWithPassword({
+  const { error } = await supabase.auth.signInWithPassword({
     email: usernameToInternalEmail(validation.cleanUsername!),
     password,
   });
-
-  if (signInError || !signInData.session) {
+  if (error) {
     return { success: false, error: 'Invalid username or password.' };
   }
 
-  const { data: approved, error: rpcError } = await memoryClient.rpc('approve_login_session', {
-    p_token: token,
-    p_refresh_token: signInData.session.refresh_token,
-    p_device_info: buildDeviceInfo(),
-  });
-
-  // Deliberately NO signOut on the memory client — its session is the one being
-  // handed to the workstation. Dropping the reference is enough; nothing was
-  // persisted anywhere.
-
-  if (rpcError || approved !== true) {
-    return {
-      success: false,
-      error: 'This code is invalid, expired, or already used. Refresh the workstation screen and scan again.',
-    };
-  }
-
-  return { success: true };
-}
-
-/** No-camera fallback (phone, authenticated): resolve the 6-char workstation PIN. */
-export async function resolveLoginPin(
-  pin: string
-): Promise<{ token?: string; error?: 'wrong_pin' | 'locked' | 'not_found' | 'not_authenticated' }> {
-  if (!(isSupabaseConfigured && supabase)) return { error: 'not_found' };
-  try {
-    const { data, error } = await withTimeout(
-      supabase.rpc('resolve_login_pin', { p_pin: pin.trim().toUpperCase() }),
-      4000
-    );
-    if (error) return { error: 'not_found' };
-    if (data?.error) return { error: data.error };
-    if (data?.token) return { token: data.token as string };
-    return { error: 'not_found' };
-  } catch {
-    return { error: 'not_found' };
-  }
+  return approveLoginSession(token);
 }
 
 /**
@@ -222,7 +246,7 @@ export async function createHandoffSession(): Promise<{ token: string; expiresAt
   try {
     const { data, error } = await withTimeout(supabase.rpc('create_handoff_session'), 5000);
     if (error || !data?.token) return null;
-    return { token: data.token as string, expiresAt: data.expiresAt as string };
+    return { token: data.token as string, expiresAt: normalizeServerTimestamp(data.expiresAt) };
   } catch {
     return null;
   }

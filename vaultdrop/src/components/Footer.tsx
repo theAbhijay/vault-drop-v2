@@ -13,7 +13,7 @@ export function Footer() {
           rel="noopener noreferrer"
           className="font-semibold text-[#014BAA] hover:underline"
         >
-          Abhijay Chauhan
+          Abhijay Singh Chauhan
         </a>
         .
       </p>

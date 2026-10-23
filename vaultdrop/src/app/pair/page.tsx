@@ -16,14 +16,13 @@ import {
   Eye,
   EyeOff,
   Smartphone,
-  KeyRound,
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { getCurrentUser, loginWithUsername, registerWithUsername } from '@/lib/auth-helpers';
 import {
-  approveLoginSessionWithCredentials,
+  approveLoginSession,
+  signInAndApprove,
   resolveHandoffSession,
-  resolveLoginPin,
   isValidPairToken,
 } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
@@ -35,10 +34,9 @@ type PairMode =
   | { kind: 'checking' }
   | { kind: 'invalid'; message: string }
   | { kind: 'info' } // no params — generic pairing landing
-  | { kind: 'approve'; token: string } // ?token= with a live phone session
+  | { kind: 'approve'; token: string } // ?token= with a live phone session → ONE TAP
   | { kind: 'auth-approve'; token: string } // ?token= but phone not signed in
   | { kind: 'handoff-login'; username: string } // ?handoff= resolved, password needed
-  | { kind: 'pin' } // manual Workstation PIN entry (requires session)
   | { kind: 'approved' };
 
 function PairContent() {
@@ -60,9 +58,6 @@ function PairContent() {
   // Auth form (phone not signed in yet)
   const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
   const [username, setUsername] = useState<string>('');
-
-  // PIN fallback
-  const [pin, setPin] = useState<string>('');
 
   useEffect(() => {
     let mounted = true;
@@ -118,14 +113,14 @@ function PairContent() {
     };
   }, [token, handoff, router]);
 
-  /** Approve a workstation session with the account password (one submit). */
-  const approveWithPassword = async (targetToken: string, targetUsername: string, targetPassword: string) => {
+  /** Approve a workstation session — ONE TAP, no password. */
+  const handleOneTapApprove = async (targetToken: string) => {
     const minDelay = new Promise((resolve) => setTimeout(resolve, 2000));
     setBusy(true);
     setError(null);
 
     try {
-      const res = await approveLoginSessionWithCredentials(targetToken, targetUsername, targetPassword);
+      const res = await approveLoginSession(targetToken);
       await minDelay;
       if (res.success) {
         setMode({ kind: 'approved' });
@@ -155,16 +150,16 @@ function PairContent() {
     setBusy(true);
 
     try {
-      let res;
+      let signedIn;
       if (isRegisterMode) {
-        res = await registerWithUsername(username, password);
+        signedIn = await registerWithUsername(username, password);
       } else {
-        res = await loginWithUsername(username, password);
+        signedIn = await loginWithUsername(username, password);
       }
 
-      if (res.success && res.user) {
-        setUser(res.user);
-        const approveRes = await approveLoginSessionWithCredentials(mode.token, username, password);
+      if (signedIn.success && signedIn.user) {
+        setUser(signedIn.user);
+        const approveRes = await signInAndApprove(mode.token, username, password);
         await minDelay;
         if (approveRes.success) {
           setMode({ kind: 'approved' });
@@ -174,7 +169,7 @@ function PairContent() {
         }
       } else {
         await minDelay;
-        setError(res.error || 'Authentication failed.');
+        setError(signedIn.error || 'Authentication failed.');
       }
     } catch {
       await minDelay;
@@ -204,35 +199,6 @@ function PairContent() {
     } catch {
       await minDelay;
       setError('Sign-in failed. Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** No-camera fallback: resolve the workstation by its 6-char PIN. */
-  const handlePinSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    const cleanPin = pin.trim().toUpperCase();
-    if (cleanPin.length !== 6) {
-      setError('The Workstation PIN is exactly 6 characters.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const res = await resolveLoginPin(cleanPin);
-      if (res.token) {
-        setPin('');
-        setMode({ kind: 'approve', token: res.token });
-      } else if (res.error === 'wrong_pin') {
-        setError('Wrong PIN. Check the code displayed on the PC screen.');
-      } else if (res.error === 'locked') {
-        setError('Too many wrong attempts — this pairing code is locked. Refresh the QR on the PC.');
-      } else {
-        setError('No pending workstation found for this PIN. Is the PC still showing its QR?');
-      }
     } finally {
       setBusy(false);
     }
@@ -283,10 +249,12 @@ function PairContent() {
   );
 
   if (mode.kind === 'checking') {
-    return shell(
-      <div className="text-center space-y-3">
-        <div className="w-8 h-8 rounded-full border-2 border-[#014BAA] border-t-transparent animate-spin mx-auto" />
-        <p className="text-[13px] font-mono text-[#6B6B6B]">Validating pairing code...</p>
+    return (
+      <div className="min-h-screen bg-[#F8F3F0]">
+        <PeacockLoader
+          message="Validating Pairing Code..."
+          submessage="Performing zero-trace cryptographic handshake"
+        />
       </div>
     );
   }
@@ -323,33 +291,6 @@ function PairContent() {
           </p>
         </div>
 
-        {user ? (
-          <div className="pt-2 border-t border-[#E5DCD4] space-y-3">
-            <p className="text-[12px] text-[#6B6B6B]">No camera available? Type the 6-character PIN shown on the PC:</p>
-            <form onSubmit={handlePinSubmit} className="flex gap-2">
-              <input
-                type="text"
-                inputMode="text"
-                autoCapitalize="characters"
-                maxLength={6}
-                value={pin}
-                onChange={(e) => setPin(e.target.value.toUpperCase())}
-                placeholder="B9C3F1"
-                aria-label="Workstation PIN"
-                className="flex-1 px-3.5 py-3 text-center text-[15px] font-mono tracking-[0.3em] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all uppercase"
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="px-4 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer"
-              >
-                <KeyRound className="w-4 h-4" />
-              </button>
-            </form>
-            {error && <p className="text-[12px] text-[#C8102E]">{error}</p>}
-          </div>
-        ) : null}
-
         <button
           onClick={() => router.push(user ? '/' : '/login')}
           className="w-full py-3.5 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer"
@@ -376,8 +317,9 @@ function PairContent() {
             </p>
           </div>
           <div className="p-3.5 bg-[#F8F3F0] rounded-xl border border-[#E5DCD4] text-[12px] text-[#6B6B6B] text-left">
-            <strong>Privacy note:</strong> You never typed your password on the lab keyboard. The workstation received
-            its own dedicated 30-minute session — your phone session stays separate and untouched.
+            <strong>Privacy note:</strong> You never typed your password on the lab keyboard — and this approval
+            needed no password at all. The workstation received its own dedicated 30-minute session that dies with
+            the tab.
           </div>
           <button
             onClick={() => router.push('/')}
@@ -471,11 +413,11 @@ function PairContent() {
           </div>
           <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
             Authorize Lab PC?{' '}
-            <AppleColorText text="Zero Trace." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
+            <AppleColorText text="One Tap. Zero Trace." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
           </h2>
           <p className="text-[13px] text-[#6B6B6B] mt-1">
-            A shared workstation is waiting for your approval. Confirm with your password — the PC receives its own
-            dedicated 30-minute session.
+            A shared workstation is waiting for your approval. Tap confirm — the PC receives its own dedicated
+            30-minute session. No password needed.
           </p>
         </div>
 
@@ -490,39 +432,16 @@ function PairContent() {
           </div>
           <div className="flex items-center justify-between text-[13px]">
             <span className="text-[#6B6B6B]">Session Security:</span>
-            <span className="text-[#1B8738] font-medium">30m timeout • Dedicated session</span>
+            <span className="text-[#1B8738] font-medium">30m timeout • One-time code</span>
           </div>
         </div>
 
         {error && <div className="p-3 bg-red-50 text-[#C8102E] text-[13px] rounded-xl border border-red-200">{error}</div>}
 
         <div className="space-y-3">
-          <div className="relative">
-            <Lock className="w-4 h-4 text-[#9B9B9B] absolute left-3 top-3.5" />
-            <input
-              type={showPassword ? 'text' : 'password'}
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Confirm your password"
-              aria-label="Confirm your password"
-              className="w-full pl-9 pr-10 py-3 text-[13px] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all font-mono"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3.5 text-[#9B9B9B] hover:text-[#1A1A1A] transition-colors p-0.5 rounded cursor-pointer"
-              title={showPassword ? 'Hide password' : 'Show password'}
-              tabIndex={-1}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-
           <button
-            onClick={() => user && approveWithPassword(mode.token, user.username, password)}
-            disabled={busy || password.length === 0}
+            onClick={() => void handleOneTapApprove(mode.token)}
+            disabled={busy}
             className="w-full py-4 bg-[#014BAA] hover:bg-[#013A85] text-white text-[15px] font-semibold rounded-2xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-2"
           >
             <Check className="w-5 h-5" />
@@ -633,8 +552,8 @@ export default function PairPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center">
-          <p className="text-[13px] text-[#6B6B6B]">Loading pairing session...</p>
+        <div className="min-h-screen bg-[#F8F3F0]">
+          <PeacockLoader message="Loading Pairing Session..." submessage="Preparing secure workstation bridge" />
         </div>
       }
     >

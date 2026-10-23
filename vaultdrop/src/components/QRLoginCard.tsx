@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { RefreshCw, ShieldCheck, Smartphone, CheckCircle2, KeyRound, TriangleAlert } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Smartphone, CheckCircle2, TriangleAlert } from 'lucide-react';
 import {
   createLoginSession,
   getLoginSessionStatus,
@@ -20,15 +20,15 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * Workstation-side QR login card (v3 zero-trust flow):
- *  1. create_login_session() → server-generated 256-bit token + 6-char PIN
- *  2. QR encodes ONLY the opaque token; the PIN covers the no-camera fallback
+ *  1. create_login_session() → server-generated 256-bit token
+ *  2. QR encodes ONLY the opaque token
  *  3. 1.5s status polling (status only — no identity leaks)
  *  4. On approval: consume_login_session() hands back a ONE-TIME refresh token
  *     which is exchanged for a REAL Supabase session (RLS fully effective).
+ *     The phone approves with a single tap — no password entry anywhere.
  */
 export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
   const [qrSvg, setQrSvg] = useState<string>('');
-  const [pin, setPin] = useState<string>('');
   const [countdown, setCountdown] = useState<number>(120);
   const [status, setStatus] = useState<'loading' | 'waiting' | 'refreshing' | 'approved' | 'error'>('loading');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -121,7 +121,6 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
 
         activeTokenRef.current = session.token;
         generationFailuresRef.current = 0;
-        setPin(session.pin);
 
         const styledSvg = await renderChromaticQR(buildPairUrl(session.token));
         if (!isMountedRef.current || generation !== generationRef.current) return;
@@ -293,22 +292,12 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
         </div>
       </div>
 
-      {/* Auto-Refresh Ticker, Workstation PIN & Manual Refresh */}
-      <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
+      {/* Auto-Refresh Ticker & Manual Refresh */}
+      <div className="flex items-center justify-center gap-2 mb-4">
         <div className="flex items-center gap-2 text-[12px] font-mono text-[#6B6B6B] bg-[#F8F3F0] px-3.5 py-1.5 rounded-full border border-[#E5DCD4]">
           <span className="w-2 h-2 rounded-full bg-[#014BAA] animate-ping" />
           <span>Auto-refreshes in {timeString}</span>
         </div>
-
-        {pin && status !== 'approved' && (
-          <div
-            className="flex items-center gap-2 text-[12px] font-mono font-semibold text-[#014BAA] bg-[#E6EEF7] px-3.5 py-1.5 rounded-full border border-[#0071E3]/20"
-            title="No camera? Enter this PIN inside the VaultDrop app on your phone"
-          >
-            <KeyRound className="w-3.5 h-3.5" />
-            <span className="tracking-[0.18em]">{pin}</span>
-          </div>
-        )}
 
         <button
           onClick={() => void generateNewQR(false)}
@@ -328,8 +317,8 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
           <span>Instant Phone Unlock</span>
         </div>
         <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-          Open the VaultDrop app on your smartphone, scan this code, and approve with your password —
-          this terminal unlocks instantly. No camera? Enter the PIN shown above in the app instead.
+          Open VaultDrop on your smartphone and scan this code — tap Approve and this terminal unlocks
+          instantly. Zero keystrokes on this keyboard.
         </p>
       </div>
 

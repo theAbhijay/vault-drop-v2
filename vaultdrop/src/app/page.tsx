@@ -43,6 +43,7 @@ import { PanicButton } from '@/components/PanicButton';
 import { IdleWarningBanner } from '@/components/IdleWarningBanner';
 import { AppleColorText } from '@/components/AppleColorText';
 import { MobileFileCard } from '@/components/MobileFileCard';
+import { PeacockLoader } from '@/components/PeacockLoader';
 
 // The back-navigation sentinel must be pushed exactly ONCE per page load —
 // a module-level guard survives React Strict Mode's double effect invocation.
@@ -421,15 +422,14 @@ export default function DashboardPage() {
     }
   }, [selectedFileIds, filteredFiles]);
 
-  // While the server-validated auth check is running, render a neutral shell
-  // (identical on server and client — zero hydration mismatch).
+  // While the server-validated auth check is running, render the Peacock
+  // loader (identical on server and client — zero hydration mismatch).
   if (authChecking || !user) {
     return (
-      <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center">
-        <div
-          className="w-8 h-8 rounded-full border-2 border-[#014BAA] border-t-transparent animate-spin"
-          role="status"
-          aria-label="Loading VaultDrop"
+      <div className="min-h-screen bg-[#F8F3F0]">
+        <PeacockLoader
+          message="Verifying Vault Session..."
+          submessage="Validating zero-trust credentials"
         />
       </div>
     );

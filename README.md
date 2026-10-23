@@ -66,10 +66,10 @@ Every day, millions of students and researchers log into shared computers in uni
 ```
 
 ### 1. Zero-Keystroke QR Handshake (Option 2 Architecture)
-- The workstation requests a server-generated **256-bit pairing token** with a strict **120-second lifespan** plus an independent 6-character Workstation PIN (no-camera fallback, 5-attempt lockout).
+- The workstation requests a server-generated **256-bit pairing token** with a strict **120-second lifespan**.
 - Encoded as a direct URL: `https://your-domain/pair?token=<64-hex-token>`.
 - **Works with any native camera app** (iOS Camera, Google Lens, Samsung Camera) or the built-in in-browser dual-engine scanner (BarcodeDetector + jsQR) — no specialized app download required.
-- Approving on your phone (password confirmation on your personal device) deposits a **one-time refresh token** via an atomic `DELETE ... RETURNING` RPC. The workstation exchanges it exactly once for a real, RLS-enforced Supabase session — your credentials never touch the lab PC, and your phone's own session family stays untouched.
+- Approving on your phone is a **single tap** — no password entry anywhere. The one-time broker deposits your current session's refresh token; the workstation exchanges it exactly once for a real, RLS-enforced Supabase session that lives for its 30-minute TTL and never refreshes. (A phone that wasn't signed in yet signs in with username/password first — on the trusted personal device only.)
 
 ### 2. Apple WWDC Interaction Physics & Design System
 VaultDrop was engineered from the ground up according to the **Apple Human Interface Guidelines**:

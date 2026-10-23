@@ -31,6 +31,13 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
   // Ref indirection for the self-rotating countdown (avoids capturing a
   // not-yet-declared binding inside generateCode).
   const rotateRef = useRef<() => void>(() => {});
+  // onClose in a ref: the dashboard re-renders every second (session TTL
+  // ticker), and an unstable inline onClose would re-run the modal's
+  // lifecycle effect — regenerating the QR every second. Refs break that.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const clearTimer = useCallback(() => {
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -82,6 +89,7 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
   }, [generateCode]);
 
   // Modal lifecycle: focus management, Escape key, body scroll lock.
+  // Runs ONLY when isOpen flips (all deps are stable identities).
   useEffect(() => {
     if (!isOpen) return;
 
@@ -98,7 +106,7 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
@@ -113,7 +121,7 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
       else document.body.dataset.vaultdropModalOpen = String(openCount);
       previousFocusRef.current?.focus?.();
     };
-  }, [isOpen, onClose, generateCode, clearTimer]);
+  }, [isOpen, generateCode, clearTimer]);
 
   if (!isOpen) return null;
 

@@ -25,6 +25,9 @@
 --      is enabled (with duplicate-safe guards)
 --   9. Grant surface reduced to the minimum the client actually needs
 --  10. get_vault_usage() RPC gives the client REAL storage usage numbers
+--  11. v3.1: Workstation PIN fallback removed (owner decision) and QR approve
+--      no longer requires the password — the phone deposits its CURRENT
+--      session token via the one-time broker (password only on fresh login)
 -- ==============================================================================
 
 -- Enable extensions
@@ -104,8 +107,6 @@ CREATE TABLE public.pairing_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     qr_token TEXT UNIQUE NOT NULL CHECK (qr_token ~ '^[a-f0-9]{64}$'),
     kind TEXT NOT NULL CHECK (kind IN ('login', 'handoff')) DEFAULT 'login',
-    pin TEXT,                       -- only for kind='login'; unambiguous alphabet
-    pin_attempts INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'expired'))
         DEFAULT 'pending',
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -116,8 +117,6 @@ CREATE TABLE public.pairing_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS pairing_sessions_expires_at_idx ON public.pairing_sessions (expires_at);
-CREATE INDEX IF NOT EXISTS pairing_sessions_pin_idx ON public.pairing_sessions (pin)
-    WHERE kind = 'login' AND status = 'pending';
 
 -- ------------------------------------------------------------------------------
 -- 4. ROW LEVEL SECURITY (RLS)
@@ -216,7 +215,7 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_username TEXT;
@@ -253,7 +252,7 @@ CREATE OR REPLACE FUNCTION public.prevent_profile_column_tamper()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 BEGIN
     IF NEW.username IS DISTINCT FROM OLD.username THEN
@@ -282,7 +281,7 @@ CREATE OR REPLACE FUNCTION public.is_username_taken(p_username TEXT)
 RETURNS BOOLEAN
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
     SELECT EXISTS (
         SELECT 1 FROM public.profiles WHERE username = lower(p_username)
@@ -296,7 +295,7 @@ CREATE OR REPLACE FUNCTION public.touch_user_activity()
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 BEGIN
     IF auth.uid() IS NULL THEN
@@ -317,7 +316,7 @@ CREATE OR REPLACE FUNCTION public.enforce_storage_quota()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     current_usage BIGINT;
@@ -354,7 +353,7 @@ CREATE OR REPLACE FUNCTION public.delete_storage_object()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 BEGIN
     DELETE FROM storage.objects
@@ -374,7 +373,7 @@ CREATE OR REPLACE FUNCTION public.get_vault_usage()
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     used_bytes BIGINT;
@@ -405,49 +404,33 @@ GRANT EXECUTE ON FUNCTION public.get_vault_usage() TO authenticated;
 -- ==============================================================================
 -- 6.8 QR LOGIN FLOW (untrusted PC ← personal phone)
 --
---   PC (anon)      : create_login_session()   → { token, pin, expiresAt }
---   PC (anon)      : get_login_session_status(token) — 1s polling
+--   PC (anon)      : create_login_session()   → { token, expiresAt }
+--   PC (anon)      : get_login_session_status(token) — 1.5s polling
 --   Phone (auth)   : approve_login_session(token, refresh_token, device_info)
---                    The refresh token comes from a THROWAWAY in-memory
---                    Supabase session signed in on the phone with the user's
---                    password, so the PC receives an independent session and
---                    the phone's own session is never rotated underneath it.
+--                    Deposits the phone's CURRENT session refresh token —
+--                    zero password entry needed anywhere.
 --   PC (anon)      : consume_login_session(token) — ONE time, row is deleted,
 --                    returns { userId, username, refreshToken }
---   No-camera path : resolve_login_pin(pin) — authenticated, 5-attempt lockout
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.create_login_session()
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_token TEXT := encode(gen_random_bytes(32), 'hex');
-    v_pin TEXT := '';
-    v_alphabet TEXT := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-    v_i INTEGER;
 BEGIN
-    -- Generate an independent random PIN (never a token prefix!)
-       LOOP
-        v_pin := '';
-        FOR v_i IN 1..6 LOOP
-            v_pin := v_pin || substr(v_alphabet, (get_byte(gen_random_bytes(1), 0) % 31) + 1, 1);
-        END LOOP;
-        EXIT WHEN NOT EXISTS (
-            SELECT 1 FROM public.pairing_sessions
-            WHERE kind = 'login' AND status = 'pending' AND pin = v_pin
-        );
-    END LOOP;
+    INSERT INTO public.pairing_sessions (qr_token, kind)
+    VALUES (v_token, 'login');
 
-    INSERT INTO public.pairing_sessions (qr_token, kind, pin)
-    VALUES (v_token, 'login', v_pin);
-
+    -- now() is a timestamptz, so jsonb serializes it WITH the +00:00 offset.
+    -- ( timezone('utc', now()) would strip the offset, and browsers would then
+    --  parse the naive string as LOCAL time — breaking clients in non-UTC zones. )
     RETURN jsonb_build_object(
         'token', v_token,
-        'pin', v_pin,
-        'expiresAt', timezone('utc'::text, now()) + INTERVAL '2 minutes'
+        'expiresAt', now() + INTERVAL '2 minutes'
     );
 END;
 $$;
@@ -459,7 +442,7 @@ CREATE OR REPLACE FUNCTION public.get_login_session_status(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_row public.pairing_sessions%ROWTYPE;
@@ -493,7 +476,7 @@ CREATE OR REPLACE FUNCTION public.approve_login_session(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_row public.pairing_sessions%ROWTYPE;
@@ -558,7 +541,7 @@ CREATE OR REPLACE FUNCTION public.consume_login_session(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_user_id UUID;
@@ -588,65 +571,6 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.consume_login_session(TEXT) TO anon, authenticated;
 
--- No-camera fallback: resolve a pending LOGIN session by its 6-char PIN.
--- Authenticated callers only; 5 failed attempts permanently lock the session.
-CREATE OR REPLACE FUNCTION public.resolve_login_pin(p_pin TEXT)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-    v_row public.pairing_sessions%ROWTYPE;
-BEGIN
-    IF auth.uid() IS NULL THEN
-        RETURN jsonb_build_object('error', 'not_authenticated');
-    END IF;
-
-    -- 1. Try the most recent pending LOGIN session whose PIN matches exactly.
-    SELECT * INTO v_row FROM public.pairing_sessions
-    WHERE kind = 'login' AND status = 'pending'
-      AND pin = upper(p_pin)
-      AND expires_at > timezone('utc'::text, now())
-    ORDER BY created_at DESC
-    LIMIT 1
-    FOR UPDATE;
-
-    IF FOUND THEN
-        RETURN jsonb_build_object(
-            'token', v_row.qr_token,
-            'expiresAt', v_row.expires_at
-        );
-    END IF;
-
-    -- 2. No exact match: charge the attempt against the most recent pending
-    --    session so brute force locks the session after 5 tries.
-    SELECT * INTO v_row FROM public.pairing_sessions
-    WHERE kind = 'login' AND status = 'pending'
-      AND expires_at > timezone('utc'::text, now())
-    ORDER BY created_at DESC
-    LIMIT 1
-    FOR UPDATE;
-
-    IF NOT FOUND THEN
-        RETURN jsonb_build_object('error', 'not_found');
-    END IF;
-
-    IF v_row.pin_attempts >= 5 THEN
-        UPDATE public.pairing_sessions SET status = 'expired' WHERE id = v_row.id;
-        RETURN jsonb_build_object('error', 'locked');
-    END IF;
-
-    UPDATE public.pairing_sessions
-    SET pin_attempts = pin_attempts + 1
-    WHERE id = v_row.id;
-
-    RETURN jsonb_build_object('error', 'wrong_pin');
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.resolve_login_pin(TEXT) TO authenticated;
-
 -- ==============================================================================
 -- 6.9 HANDOFF FLOW (logged-in PC → personal phone)
 --
@@ -661,7 +585,7 @@ CREATE OR REPLACE FUNCTION public.create_handoff_session()
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_token TEXT := encode(gen_random_bytes(32), 'hex');
@@ -673,9 +597,10 @@ BEGIN
     INSERT INTO public.pairing_sessions (qr_token, kind, user_id)
     VALUES (v_token, 'handoff', auth.uid());
 
+    -- Offset-preserving timestamptz (see create_login_session note).
     RETURN jsonb_build_object(
         'token', v_token,
-        'expiresAt', timezone('utc'::text, now()) + INTERVAL '2 minutes'
+        'expiresAt', now() + INTERVAL '2 minutes'
     );
 END;
 $$;
@@ -686,7 +611,7 @@ CREATE OR REPLACE FUNCTION public.resolve_handoff_session(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_user_id UUID;
@@ -719,7 +644,7 @@ CREATE OR REPLACE FUNCTION public.vaultdrop_ping()
 RETURNS BOOLEAN
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$ SELECT TRUE; $$;
 
 GRANT EXECUTE ON FUNCTION public.vaultdrop_ping() TO anon, authenticated;
@@ -732,7 +657,7 @@ CREATE OR REPLACE FUNCTION public.purge_expired_files()
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     deleted_count INTEGER;
@@ -749,7 +674,7 @@ CREATE OR REPLACE FUNCTION public.purge_expired_user_accounts()
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     deleted_users INTEGER := 0;
@@ -777,7 +702,7 @@ CREATE OR REPLACE FUNCTION public.purge_expired_pairing_sessions()
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     deleted_sessions INTEGER;
@@ -853,9 +778,11 @@ GRANT SELECT, INSERT, DELETE ON public.files TO authenticated;
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 
 -- Retire the v2 RPCs so stale clients fail loudly instead of silently
--- using the insecure approve/consume path.
+-- using the insecure approve/consume path. Also drop the retired v3.0 PIN
+-- lookup (PIN fallback removed at the owner's request).
 DROP FUNCTION IF EXISTS public.approve_pairing_session(TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.consume_pairing_session(TEXT);
+DROP FUNCTION IF EXISTS public.resolve_login_pin(TEXT);
 
 -- ------------------------------------------------------------------------------
 -- END OF SCHEMA
