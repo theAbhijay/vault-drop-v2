@@ -8,6 +8,7 @@ export interface VaultFile {
   category: FileCategory;
   uploadedAt: string;
   expiresAt: string;
+  storagePath?: string;
   url?: string;
   content?: string;
   blob?: Blob;

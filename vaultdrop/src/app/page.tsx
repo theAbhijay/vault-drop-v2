@@ -23,7 +23,7 @@ import { MobileHandoffModal } from '@/components/MobileHandoffModal';
 import { redirectToGoogleLens, GOOGLE_LENS_INTENT_URL } from '@/lib/google-lens';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
-import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip } from '@/lib/file-helpers';
+import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip, downloadVaultFileDirectly } from '@/lib/file-helpers';
 import { VaultFile, UserProfile } from '@/lib/types';
 import { useSessionTimer } from '@/hooks/useSessionTimer';
 
@@ -40,7 +40,12 @@ import { MobileFileCard } from '@/components/MobileFileCard';
 export default function DashboardPage() {
   const router = useRouter();
 
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      return getCurrentUser();
+    }
+    return null;
+  });
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -203,26 +208,9 @@ export default function DashboardPage() {
     }
   };
 
-  // Download Single File
-  const handleDownload = (file: VaultFile) => {
-    if (file.url) {
-      const a = document.createElement('a');
-      a.href = file.url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } else if (file.content) {
-      const blob = new Blob([file.content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+  // Download Single File (Reliable on PC & Mobile)
+  const handleDownload = async (file: VaultFile) => {
+    await downloadVaultFileDirectly(file, user?.id);
   };
 
   // Bulk Multi-Select Handlers
@@ -251,7 +239,7 @@ export default function DashboardPage() {
     if (selected.length === 0) return;
     setIsZipping(true);
     try {
-      await downloadFilesAsZip(selected, `vaultdrop_${user?.username || 'archive'}.zip`);
+      await downloadFilesAsZip(selected, `vaultdrop_${user?.username || 'archive'}.zip`, user?.id);
     } catch (err) {
       console.error('Failed to create zip bundle', err);
     } finally {
@@ -306,12 +294,9 @@ export default function DashboardPage() {
     return map;
   }, [files]);
 
-  if (loading || !user) {
-    return (
-      <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center p-4">
-        <p className="text-[13px] text-[#6B6B6B] font-mono animate-pulse">Initializing encrypted vault...</p>
-      </div>
-    );
+  // If user is not authenticated, return null while router redirects
+  if (!user) {
+    return null;
   }
 
   // Format session time
@@ -525,7 +510,13 @@ export default function DashboardPage() {
           )}
 
           {/* File Inventory List: Adaptive Desktop Table vs Clean Mobile Cards */}
-          {filteredFiles.length > 0 ? (
+          {loading && files.length === 0 ? (
+            /* Smooth inline initial loader (keeps full dashboard visible!) */
+            <div className="p-12 sm:p-16 text-center space-y-3">
+              <div className="w-8 h-8 rounded-full border-2 border-[#014BAA] border-t-transparent animate-spin mx-auto" />
+              <p className="text-[12px] font-mono text-[#6B6B6B]">Connecting to vault storage...</p>
+            </div>
+          ) : filteredFiles.length > 0 ? (
             <>
               {/* Mobile View (< 640px): Clean uncluttered cards */}
               <div className="sm:hidden p-3 space-y-3">

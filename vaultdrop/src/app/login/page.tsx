@@ -114,6 +114,9 @@ function LoginContent() {
       await minDelay; // Guarantee 2s peacock loading screen
 
       if (res.success) {
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
+        }
         router.push('/');
       } else {
         setError(res.error || 'Authentication failed.');

@@ -65,6 +65,7 @@ function PairContent() {
         localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
         localStorage.setItem('vaultdrop_session_expiry', expiry);
         sessionStorage.setItem('vaultdrop_session_expiry', expiry);
+        sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
       } catch (err) {
         console.error('Storage error during handoff:', err);
       }

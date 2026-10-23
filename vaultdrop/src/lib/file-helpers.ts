@@ -181,6 +181,7 @@ export async function uploadVaultFile(
       category,
       uploadedAt: new Date().toISOString(),
       expiresAt,
+      storagePath,
       url: signedUrlData?.signedUrl,
       blob: file,
     };
@@ -229,6 +230,7 @@ export async function uploadVaultFile(
 
 /**
  * Fetch all valid (unexpired) files for a user.
+ * Generates signed URLs in batch so preview and download work immediately.
  */
 export async function getUserFiles(userId: string): Promise<VaultFile[]> {
   if (isSupabaseConfigured && supabase) {
@@ -242,6 +244,26 @@ export async function getUserFiles(userId: string): Promise<VaultFile[]> {
 
     const now = Date.now();
     const valid = data.filter(row => new Date(row.expires_at).getTime() > now);
+    if (valid.length === 0) return [];
+
+    // Batch generate signed URLs (valid 3600 seconds) so every file has an active download URL
+    const paths = valid.map(row => row.storage_path);
+    const urlMap = new Map<string, string>();
+    try {
+      const { data: signedUrls } = await supabase.storage
+        .from('vault')
+        .createSignedUrls(paths, 3600);
+
+      if (signedUrls) {
+        signedUrls.forEach(item => {
+          if (item && item.signedUrl && item.path) {
+            urlMap.set(item.path, item.signedUrl);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Batch createSignedUrls error:', err);
+    }
 
     return valid.map(row => ({
       id: row.id,
@@ -251,7 +273,8 @@ export async function getUserFiles(userId: string): Promise<VaultFile[]> {
       category: getFileCategory(row.filename, row.mime_type),
       uploadedAt: row.created_at,
       expiresAt: row.expires_at,
-      url: undefined, // Signed URLs fetched on-demand
+      storagePath: row.storage_path,
+      url: urlMap.get(row.storage_path),
     }));
   }
 
@@ -292,34 +315,142 @@ export async function deleteVaultFile(userId: string, fileId: string): Promise<b
 }
 
 /**
+ * Direct file download guaranteed to work reliably on both PC and mobile smartphones.
+ * Obtains binary Blob and triggers same-origin download with exact filename.
+ */
+export async function downloadVaultFileDirectly(file: VaultFile, userId?: string): Promise<boolean> {
+  try {
+    let blob: Blob | null = file.blob || null;
+
+    // 1. Direct binary download from Supabase Storage
+    if (!blob && isSupabaseConfigured && supabase) {
+      const storagePath = file.storagePath || (userId ? `user_${userId}/${file.id}_${file.name}` : undefined);
+      if (storagePath) {
+        try {
+          const { data, error } = await supabase.storage.from('vault').download(storagePath);
+          if (!error && data) {
+            blob = data;
+          }
+        } catch {
+          // fallback to URL
+        }
+      }
+    }
+
+    // 2. Fetch via signed or direct URL as binary Blob
+    if (!blob && file.url) {
+      try {
+        const response = await fetch(file.url);
+        if (response.ok) {
+          blob = await response.blob();
+        }
+      } catch (err) {
+        console.warn('Fetch from signed URL failed:', err);
+      }
+    }
+
+    // 3. Fallback for text content in local/mock mode
+    if (!blob && file.content) {
+      blob = new Blob([file.content], { type: file.type || 'text/plain' });
+    }
+
+    // 4. Trigger download with same-origin blob: URL (guaranteed not blocked by browser download policy)
+    if (blob) {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.style.display = 'none';
+      link.href = blobUrl;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+        window.URL.revokeObjectURL(blobUrl);
+      }, 2000);
+      return true;
+    }
+
+    // 5. Direct window/link navigation fallback
+    if (file.url) {
+      const link = document.createElement('a');
+      link.style.display = 'none';
+      link.href = file.url;
+      link.download = file.name;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+      }, 1000);
+      return true;
+    }
+
+    return false;
+  } catch (err) {
+    console.error('downloadVaultFileDirectly failed:', err);
+    return false;
+  }
+}
+
+/**
  * Bulk zip download of selected files using JSZip.
  */
-export async function downloadFilesAsZip(files: VaultFile[], zipName = 'vaultdrop_bundle.zip'): Promise<void> {
+export async function downloadFilesAsZip(
+  files: VaultFile[],
+  zipName = 'vaultdrop_bundle.zip',
+  userId?: string
+): Promise<void> {
   const zip = new JSZip();
 
   for (const file of files) {
-    if (file.blob) {
-      zip.file(file.name, file.blob);
-    } else if (file.url) {
+    let blob: Blob | null = file.blob || null;
+
+    if (!blob && isSupabaseConfigured && supabase) {
+      const storagePath = file.storagePath || (userId ? `user_${userId}/${file.id}_${file.name}` : undefined);
+      if (storagePath) {
+        try {
+          const { data } = await supabase.storage.from('vault').download(storagePath);
+          if (data) blob = data;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!blob && file.url) {
       try {
         const response = await fetch(file.url);
-        const blob = await response.blob();
-        zip.file(file.name, blob);
+        if (response.ok) {
+          blob = await response.blob();
+        }
       } catch (e) {
         console.error('Failed to download file for zip:', file.name, e);
       }
+    }
+
+    if (blob) {
+      zip.file(file.name, blob);
     } else if (file.content) {
       zip.file(file.name, file.content);
     }
   }
 
   const content = await zip.generateAsync({ type: 'blob' });
-  const downloadUrl = URL.createObjectURL(content);
+  const downloadUrl = window.URL.createObjectURL(content);
   const a = document.createElement('a');
+  a.style.display = 'none';
   a.href = downloadUrl;
   a.download = zipName;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(downloadUrl);
+  setTimeout(() => {
+    if (document.body.contains(a)) {
+      document.body.removeChild(a);
+    }
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 2000);
 }
