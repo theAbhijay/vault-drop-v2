@@ -15,12 +15,13 @@ import {
   Square,
   Smartphone,
   QrCode,
-  RefreshCw
+  RefreshCw,
+  Camera
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
 import { MobileHandoffModal } from '@/components/MobileHandoffModal';
-import { redirectToGoogleLens, GOOGLE_LENS_INTENT_URL } from '@/lib/google-lens';
+import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip, downloadVaultFileDirectly } from '@/lib/file-helpers';
@@ -55,6 +56,7 @@ export default function DashboardPage() {
 
   // Scene 2: Smartphone status
   const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
 
   // Filters & Search
   const [activeFilter, setActiveFilter] = useState<VaultFile['category'] | 'all'>('all');
@@ -181,6 +183,29 @@ export default function DashboardPage() {
   const handleManualLogout = async () => {
     await logoutUser();
     router.push('/login');
+  };
+
+  // QR Scan Handler for Scene 2 (Phone inside vault authorizes PC)
+  const handleScannedQR = (scannedText: string) => {
+    try {
+      const clean = scannedText.trim();
+      let token: string | null = null;
+      try {
+        const url = new URL(clean, typeof window !== 'undefined' ? window.location.origin : undefined);
+        token = url.searchParams.get('token');
+      } catch {
+        const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9_-]+)/);
+        if (tokenMatch) token = tokenMatch[1];
+      }
+      if (token || clean.length >= 32) {
+        const finalToken = token || clean;
+        router.push(`/pair?token=${encodeURIComponent(finalToken)}`);
+        return;
+      }
+      alert('Scanned QR code does not contain a valid workstation pairing token.');
+    } catch (err) {
+      console.error('QR scan error:', err);
+    }
   };
 
   // Upload Handler with Live Progress Bar
@@ -328,16 +353,16 @@ export default function DashboardPage() {
           <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
             {/* Scene-Aware Action Button */}
             {isMobileDevice ? (
-              /* Scene 2: Smartphone user inside vault -> "Log in on PC via QR" (Directly redirects to Google Lens) */
-              <a
-                href={GOOGLE_LENS_INTENT_URL}
-                onClick={redirectToGoogleLens}
+              /* Scene 2: Smartphone user inside vault -> "Log in on PC via QR" (In-Browser Camera Scanner) */
+              <button
+                type="button"
+                onClick={() => setIsScannerOpen(true)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[11px] sm:text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs whitespace-nowrap"
-                title="Open Google Lens to scan PC monitor"
+                title="Scan PC monitor QR to authorize session"
               >
-                <QrCode className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
+                <Camera className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
                 <span>Log in on PC via QR</span>
-              </a>
+              </button>
             ) : (
               /* Scene 1: PC user inside vault -> "Open on Phone via QR" */
               <button
@@ -601,6 +626,15 @@ export default function DashboardPage() {
           user={user}
         />
       )}
+
+      {/* 8. Scene 2 Modal: Smartphone in-browser camera scanner */}
+      <CameraQRScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={handleScannedQR}
+        title="Pair PC Workstation"
+        subtitle="Align the PC screen QR code within the frame"
+      />
     </div>
   );
 }

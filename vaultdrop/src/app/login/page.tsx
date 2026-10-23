@@ -18,14 +18,15 @@ import {
   Eye,
   EyeOff,
   Flame,
-  ChevronRight
+  ChevronRight,
+  Camera
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
 import { Footer } from '@/components/Footer';
-import { redirectToGoogleLens, GOOGLE_LENS_INTENT_URL } from '@/lib/google-lens';
+import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { findTokenByPin } from '@/lib/pair-helpers';
 
@@ -51,6 +52,7 @@ function LoginContent() {
 
   // Mobile Device Detection for Scene 1
   const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
 
   // Auto-dismissing alerts
   const [showPanicAlert, setShowPanicAlert] = useState<boolean>(reason === 'panic');
@@ -150,6 +152,59 @@ function LoginContent() {
       setPinError('Failed to verify PIN. Please try again.');
     } finally {
       setIsVerifyingPin(false);
+    }
+  };
+
+  const handleScannedQR = (scannedText: string) => {
+    try {
+      const clean = scannedText.trim();
+      let token: string | null = null;
+      let handoffUser: string | null = null;
+      let handoffUid: string | null = null;
+
+      try {
+        const url = new URL(clean, typeof window !== 'undefined' ? window.location.origin : undefined);
+        token = url.searchParams.get('token');
+        handoffUser = url.searchParams.get('handoff');
+        handoffUid = url.searchParams.get('uid');
+      } catch {
+        const tokenMatch = clean.match(/[?&]token=([a-zA-Z0-9_-]+)/);
+        if (tokenMatch) token = tokenMatch[1];
+        const handoffMatch = clean.match(/[?&]handoff=([^&]+)/);
+        if (handoffMatch) handoffUser = decodeURIComponent(handoffMatch[1]);
+      }
+
+      if (handoffUser) {
+        const profile = {
+          id: handoffUid || `user_${handoffUser}`,
+          username: handoffUser,
+          storageCapMb: 50,
+          usedBytes: 0,
+          createdAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        };
+
+        const expiry = (Date.now() + 30 * 60 * 1000).toString();
+        localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
+        localStorage.setItem('vaultdrop_session_expiry', expiry);
+        sessionStorage.setItem('vaultdrop_session_expiry', expiry);
+        sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
+
+        router.push('/');
+        return;
+      }
+
+      if (token || clean.length >= 32) {
+        const finalToken = token || clean;
+        router.push(`/pair?token=${encodeURIComponent(finalToken)}`);
+        return;
+      }
+
+      setError('Scanned QR code does not contain a valid session token.');
+    } catch (err) {
+      console.error('Scan handling error:', err);
+      setError('Failed to process scanned QR code.');
     }
   };
 
@@ -276,34 +331,29 @@ function LoginContent() {
                       </div>
                     </div>
 
-                    {/* Centered Overlay Action Box for Scene 1 (Direct Google Lens Redirect) */}
+                    {/* Centered Overlay Action Box for Scene 1 (Live Browser Camera QR Scanner) */}
                     <div className="relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E5DCD4] shadow-apple p-4 space-y-2.5 max-w-[240px]">
                       <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-sm">
-                        <Sparkles className="w-5 h-5" />
+                        <Camera className="w-5 h-5" />
                       </div>
 
                       <div className="space-y-0.5">
-                        <h4 className="text-[14px] font-bold text-[#1A1A1A] tracking-tight">Log In via QR</h4>
+                        <h4 className="text-[14px] font-bold text-[#1A1A1A] tracking-tight">Camera Scanner</h4>
                         <p className="text-[11px] text-[#6B6B6B] leading-tight">
-                          Open Google Lens to scan the QR code on your PC monitor
+                          Point camera at the QR code on your PC monitor to log in instantly
                         </p>
                       </div>
 
-                      <a
-                        href={GOOGLE_LENS_INTENT_URL}
-                        onClick={redirectToGoogleLens}
-                        className="w-full py-2 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
+                      <button
+                        type="button"
+                        onClick={() => setIsScannerOpen(true)}
+                        className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Open Google Lens</span>
-                      </a>
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Open Camera Scanner</span>
+                      </button>
                     </div>
                   </div>
-
-                  {/* Universal Native Camera Tip */}
-                  <p className="text-[11px] text-[#6B6B6B] max-w-xs mx-auto leading-relaxed">
-                    💡 <span className="font-semibold text-[#1A1A1A]">No Google Lens?</span> Point your iPhone or Android built-in Camera app directly at the PC screen.
-                  </p>
 
                   {/* Manual 6-Character Workstation PIN Fallback */}
                   <div className="max-w-[280px] mx-auto p-3.5 bg-white rounded-2xl border border-[#E5DCD4] shadow-2xs space-y-2.5 text-left">
@@ -525,7 +575,16 @@ function LoginContent() {
         </div>
       </section>
 
-      {/* 5. Production Footer */}
+      {/* 5. Live In-Browser Camera Scanner Modal */}
+      <CameraQRScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={handleScannedQR}
+        title="Scan PC Monitor QR"
+        subtitle="Align the PC screen QR code within the frame to log in"
+      />
+
+      {/* 6. Production Footer */}
       <Footer />
     </div>
   );
