@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { AppleColorText } from '@/components/AppleColorText';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
-import { DeviceModePill } from '@/components/DeviceModePill';
+import { Footer } from '@/components/Footer';
 
 export default function SecurityPage() {
   return (
@@ -41,7 +41,6 @@ export default function SecurityPage() {
           </Link>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <DeviceModePill />
             <OpenSourceLink />
             <Link
               href="/login"
@@ -180,9 +179,7 @@ export default function SecurityPage() {
       </main>
 
       {/* 3. Footer */}
-      <footer className="max-w-5xl w-full mx-auto px-4 md:px-8 py-5 text-center text-[12px] text-[#9B9B9B] border-t border-[#E5DCD4]/60">
-        VaultDrop Cryptographic Engine • In-Memory Cache • Zero-Trace Lab Mode
-      </footer>
+      <Footer />
     </div>
   );
 }

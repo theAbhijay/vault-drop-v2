@@ -164,6 +164,7 @@ export async function registerWithUsername(
 
     if (typeof window !== 'undefined') {
       localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
+      sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
     }
 
     return { success: true, user: profile };
@@ -202,6 +203,7 @@ export async function registerWithUsername(
     };
 
     localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
+    sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
     return { success: true, user: profile };
   }
 
@@ -261,6 +263,7 @@ export async function loginWithUsername(
 
     if (typeof window !== 'undefined') {
       localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
+      sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
     }
 
     return { success: true, user: profile };
@@ -291,6 +294,7 @@ export async function loginWithUsername(
     };
 
     localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
+    sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
     return { success: true, user: profile };
   }
 
@@ -302,11 +306,24 @@ export async function loginWithUsername(
  */
 export function getCurrentUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
+
+  // Strict 30-minute session lifetime enforcement
+  const sessionExp = sessionStorage.getItem('vaultdrop_session_expiry');
+  if (!sessionExp) {
+    return null;
+  }
+  const expTimestamp = parseInt(sessionExp, 10);
+  if (isNaN(expTimestamp) || expTimestamp <= Date.now()) {
+    // Session expired! Invalidate immediately
+    logoutUser();
+    return null;
+  }
+
   const data = localStorage.getItem(MOCK_STORAGE_KEY_USER);
   if (!data) return null;
   try {
     const user: UserProfile = JSON.parse(data);
-    // Check if account has passed its 30-day expiration
+    // Check if account has passed its 30-day lifecycle
     if (new Date(user.accountExpiresAt).getTime() <= Date.now()) {
       logoutUser();
       return null;

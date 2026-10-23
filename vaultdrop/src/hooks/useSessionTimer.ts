@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-// Expanded session duration: 30 minutes (1800 seconds)
-const SESSION_DURATION_SECONDS = 30 * 60;
-// Warning shows during the final 2 minutes (120 seconds)
-const WARNING_THRESHOLD_SECONDS = 120;
-const SESSION_STORAGE_KEY = 'vaultdrop_session_expiry';
+// Strict 30-minute session lifetime (1800 seconds)
+export const SESSION_DURATION_SECONDS = 30 * 60;
+// Warning banner displays during final 2 minutes
+export const WARNING_THRESHOLD_SECONDS = 120;
+export const SESSION_STORAGE_KEY = 'vaultdrop_session_expiry';
 
 interface UseSessionTimerOptions {
   onTimeout: () => void;
@@ -16,24 +16,10 @@ interface UseSessionTimerOptions {
 export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOptions) {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(SESSION_DURATION_SECONDS);
   const [isWarning, setIsWarning] = useState<boolean>(false);
-  const timeoutCalledRef = useRef<boolean>(false);
+  const timeoutFiredRef = useRef<boolean>(false);
+  const lastHeartbeatRef = useRef<number>(0);
 
-  // Initialize or fetch persistent session expiry timestamp
-  const getOrCreateExpiry = useCallback((): number => {
-    if (typeof window === 'undefined') return Date.now() + SESSION_DURATION_SECONDS * 1000;
-    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
-    if (stored) {
-      const exp = parseInt(stored, 10);
-      if (!isNaN(exp) && exp > Date.now()) {
-        return exp;
-      }
-    }
-    const newExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
-    sessionStorage.setItem(SESSION_STORAGE_KEY, newExpiry.toString());
-    return newExpiry;
-  }, []);
-
-  // Extend session by 30 minutes
+  // Extend or initialize the session
   const extendSession = useCallback(() => {
     const newExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
     if (typeof window !== 'undefined') {
@@ -41,55 +27,104 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
     }
     setSecondsRemaining(SESSION_DURATION_SECONDS);
     setIsWarning(false);
-    timeoutCalledRef.current = false;
+    timeoutFiredRef.current = false;
+    lastHeartbeatRef.current = Date.now();
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || typeof window === 'undefined') return;
 
-    timeoutCalledRef.current = false;
-    let targetExpiry = getOrCreateExpiry();
+    timeoutFiredRef.current = false;
 
-    const updateTimer = () => {
-      const diff = Math.max(0, Math.floor((targetExpiry - Date.now()) / 1000));
-      setSecondsRemaining(diff);
+    // Check existing expiry or initialize once
+    let stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    let targetExpiry: number;
 
-      if (diff <= WARNING_THRESHOLD_SECONDS && diff > 0) {
-        setIsWarning(true);
-      } else if (diff > WARNING_THRESHOLD_SECONDS) {
-        setIsWarning(false);
-      }
-
-      if (diff <= 0 && !timeoutCalledRef.current) {
-        timeoutCalledRef.current = true;
-        if (typeof window !== 'undefined') {
+    if (stored) {
+      const parsed = parseInt(stored, 10);
+      if (!isNaN(parsed)) {
+        if (parsed <= Date.now()) {
+          // ALREADY EXPIRED! Terminate session immediately
           sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          timeoutFiredRef.current = true;
+          onTimeout();
+          return;
         }
-        onTimeout();
+        targetExpiry = parsed;
+      } else {
+        targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
+        sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
       }
+    } else {
+      targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
+      sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
+    }
+
+    const checkAndTick = () => {
+      const now = Date.now();
+      lastHeartbeatRef.current = now;
+
+      const diffSeconds = Math.floor((targetExpiry - now) / 1000);
+
+      if (diffSeconds <= 0) {
+        setSecondsRemaining(0);
+        setIsWarning(false);
+        if (!timeoutFiredRef.current) {
+          timeoutFiredRef.current = true;
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          onTimeout();
+        }
+        return;
+      }
+
+      setSecondsRemaining(diffSeconds);
+      setIsWarning(diffSeconds <= WARNING_THRESHOLD_SECONDS);
     };
 
-    // Run initial tick
-    updateTimer();
+    // Immediate initial check
+    checkAndTick();
 
-    // High-precision interval ticker
-    const interval = setInterval(updateTimer, 1000);
+    // High-frequency tick interval
+    const interval = setInterval(checkAndTick, 1000);
 
-    // Tab visibility listener: when student switches back to this tab, immediately check
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        targetExpiry = getOrCreateExpiry();
-        updateTimer();
+    // Sleep / Tab Switch Handler: detects if laptop slept or tab was backgrounded for > 5s
+    const handleVisibilityOrFocus = () => {
+      const now = Date.now();
+      const currentStored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (currentStored) {
+        const parsed = parseInt(currentStored, 10);
+        if (parsed <= now) {
+          // User was away / laptop was in sleep mode!
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          if (!timeoutFiredRef.current) {
+            timeoutFiredRef.current = true;
+            onTimeout();
+          }
+          return;
+        }
+        targetExpiry = parsed;
       }
+      checkAndTick();
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // BFCache / History Navigation listener: prevents back button from reviving old session
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        handleVisibilityOrFocus();
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
 
     return () => {
       clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('pageshow', handlePageShow);
     };
-  }, [enabled, getOrCreateExpiry, onTimeout]);
+  }, [enabled, onTimeout]);
 
   return {
     secondsRemaining,

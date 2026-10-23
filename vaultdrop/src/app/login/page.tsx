@@ -16,46 +16,37 @@ import {
   Clock,
   HardDrive,
   Eye,
+  EyeOff,
   Flame,
-  Laptop,
-  Smartphone,
   ChevronRight
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
-import { DeviceModePill } from '@/components/DeviceModePill';
-import { useDeviceMode } from '@/hooks/useDeviceMode';
-import { loginWithUsername, registerWithUsername, getCurrentUser } from '@/lib/auth-helpers';
+import { Footer } from '@/components/Footer';
+import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 
-type GatewayTab = 'computer' | 'phone' | 'password';
+type GatewayTab = 'qr' | 'password';
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams.get('reason');
-  const { isMobile, deviceMode } = useDeviceMode();
 
-  const [activeTab, setActiveTab] = useState<GatewayTab>('computer');
+  const [activeTab, setActiveTab] = useState<GatewayTab>('qr');
   const [isRegister, setIsRegister] = useState<boolean>(false);
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Intelligently select default tab based on device detection
   useEffect(() => {
-    if (isMobile) {
-      setActiveTab('password');
-    } else {
-      setActiveTab('computer');
-    }
-  }, [isMobile]);
-
-  useEffect(() => {
-    // If already logged in and not coming from panic/timeout, redirect to dashboard
-    if (!reason && getCurrentUser()) {
+    // If arriving with a termination reason (timeout/panic/back), ensure session is wiped
+    if (reason) {
+      logoutUser();
+    } else if (getCurrentUser()) {
       router.push('/');
     }
   }, [reason, router]);
@@ -116,7 +107,7 @@ function LoginContent() {
           </div>
 
           {/* Right Header Navigation & Actions */}
-          <div className="flex items-center gap-1.5 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/security"
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-[#F8F3F0] text-[#1A1A1A] hover:text-[#014BAA] border border-[#E5DCD4] text-[12px] font-medium shadow-xs transition-all tap-spring"
@@ -125,7 +116,6 @@ function LoginContent() {
               <span>Security</span>
             </Link>
 
-            <DeviceModePill />
             <OpenSourceLink />
           </div>
         </div>
@@ -143,7 +133,7 @@ function LoginContent() {
             Unlock Your Vault on <AppleColorText text="Any Terminal." mode="chars" />
           </h1>
           <p className="text-[13px] sm:text-[14px] text-[#6B6B6B] leading-relaxed">
-            Select how you want to connect: display a QR code on a shared PC, pair via phone, or sign in directly.
+            Scan with your smartphone for zero-keystroke entry, or authenticate directly with your username and password.
           </p>
         </div>
 
@@ -160,115 +150,60 @@ function LoginContent() {
             <span>Panic Wipe triggered. All local session tokens incinerated immediately.</span>
           </div>
         )}
+        {reason === 'back_navigation' && (
+          <div className="w-full max-w-md mb-4 p-3.5 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-[13px] text-red-800 animate-in fade-in">
+            <Shield className="w-4.5 h-4.5 text-red-600 flex-shrink-0" />
+            <span>Session Terminated. Browser navigation detected — vault sealed immediately for security.</span>
+          </div>
+        )}
 
         {/* THE CENTER GATEWAY BOX */}
         <div className="w-full max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg p-5 sm:p-7 transition-all duration-300">
-          {/* Gateway Mode Switcher Tabs */}
-          <div className="grid grid-cols-3 gap-1 p-1 bg-[#F8F3F0] rounded-2xl border border-[#E5DCD4] mb-6">
-            {/* Tab 1: Computer Login with QR */}
+          {/* Gateway Mode Switcher: 2 Clean Options */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#F8F3F0] rounded-2xl border border-[#E5DCD4] mb-6">
+            {/* Tab 1: QR Code Login */}
             <button
               type="button"
               onClick={() => {
-                setActiveTab('computer');
+                setActiveTab('qr');
                 setError(null);
               }}
-              className={`py-2 px-1 text-[11px] sm:text-[12px] font-semibold rounded-xl transition-all tap-spring flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
-                activeTab === 'computer'
+              className={`py-2.5 px-3 text-[12px] sm:text-[13px] font-semibold rounded-xl transition-all tap-spring flex items-center justify-center gap-2 cursor-pointer ${
+                activeTab === 'qr'
                   ? 'bg-white text-[#014BAA] shadow-xs'
                   : 'text-[#6B6B6B] hover:text-[#1A1A1A]'
               }`}
             >
-              <Laptop className="w-3.5 h-3.5" />
-              <span>PC with QR</span>
+              <QrCode className="w-4 h-4" />
+              <span>QR Code</span>
             </button>
 
-            {/* Tab 2: Smartphone Scan & Pair */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('phone');
-                setError(null);
-              }}
-              className={`py-2 px-1 text-[11px] sm:text-[12px] font-semibold rounded-xl transition-all tap-spring flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
-                activeTab === 'phone'
-                  ? 'bg-white text-[#014BAA] shadow-xs'
-                  : 'text-[#6B6B6B] hover:text-[#1A1A1A]'
-              }`}
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>Phone Pair</span>
-            </button>
-
-            {/* Tab 3: Username & Password */}
+            {/* Tab 2: Username & Password */}
             <button
               type="button"
               onClick={() => {
                 setActiveTab('password');
                 setError(null);
               }}
-              className={`py-2 px-1 text-[11px] sm:text-[12px] font-semibold rounded-xl transition-all tap-spring flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
+              className={`py-2.5 px-3 text-[12px] sm:text-[13px] font-semibold rounded-xl transition-all tap-spring flex items-center justify-center gap-2 cursor-pointer ${
                 activeTab === 'password'
                   ? 'bg-white text-[#014BAA] shadow-xs'
                   : 'text-[#6B6B6B] hover:text-[#1A1A1A]'
               }`}
             >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>Password</span>
+              <KeyRound className="w-4 h-4" />
+              <span>Username & Password</span>
             </button>
           </div>
 
-          {/* TAB 1: Computer Login (Displays 2-Min Apple Chromatic QR Code) */}
-          {activeTab === 'computer' && (
-            <div key="tab-computer" className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
-              <div className="text-center mb-4">
-                <span className="text-[12px] font-mono text-[#014BAA] bg-[#014BAA]/10 px-2.5 py-0.5 rounded-full font-semibold">
-                  Lab Monitor Display
-                </span>
-                <p className="text-[13px] text-[#6B6B6B] mt-2">
-                  Scan this code using any smartphone camera to log in with zero keyboard strokes.
-                </p>
-              </div>
+          {/* TAB 1: QR Code Flow (Displays Apple Chromatic Dynamic QR) */}
+          {activeTab === 'qr' && (
+            <div key="tab-qr" className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
               <QRLoginCard onSuccess={() => router.push('/')} />
             </div>
           )}
 
-          {/* TAB 2: Smartphone Login (Pair or Authorize Lab PC) */}
-          {activeTab === 'phone' && (
-            <div key="tab-phone" className="space-y-5 text-center animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out py-2">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-md">
-                <QrCode className="w-7 h-7" />
-              </div>
-
-              <div className="space-y-1.5">
-                <h3 className="text-[18px] font-bold text-[#1A1A1A] tracking-tight">
-                  Smartphone Pairing Bridge
-                </h3>
-                <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-                  Use your private phone camera to scan the dynamic QR code displayed on the lab computer monitor.
-                </p>
-              </div>
-
-              <div className="p-4 bg-[#F8F3F0] rounded-2xl border border-[#E5DCD4] text-left space-y-2 text-[12px] text-[#6B6B6B]">
-                <div className="flex items-center gap-2 font-semibold text-[#1A1A1A]">
-                  <ShieldCheck className="w-4 h-4 text-[#014BAA]" />
-                  <span>How Phone Pairing Works:</span>
-                </div>
-                <p>1. Open your native phone camera (iOS/Android).</p>
-                <p>2. Point camera at the QR code on the lab PC.</p>
-                <p>3. Tap the link to authorize — the lab PC unlocks in 0ms!</p>
-              </div>
-
-              <Link
-                href="/pair"
-                className="w-full py-3.5 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-2"
-              >
-                <span>Open Workstation Pairing Terminal</span>
-                <ArrowRight className="w-4 h-4" />
-              </Link>
-            </div>
-          )}
-
-          {/* TAB 3: Username & Password Direct Flow */}
+          {/* TAB 2: Username & Password Direct Flow */}
           {activeTab === 'password' && (
             <div 
               key={isRegister ? 'register-mode' : 'login-mode'} 
@@ -314,13 +249,22 @@ function LoginContent() {
                   <div className="relative">
                     <Lock className="w-4 h-4 text-[#9B9B9B] absolute left-3 top-3.5" />
                     <input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full pl-9 pr-3 py-3 text-[13px] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all"
+                      className="w-full pl-9 pr-10 py-3 text-[13px] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all font-mono"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3.5 text-[#9B9B9B] hover:text-[#1A1A1A] transition-colors p-0.5 rounded cursor-pointer"
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
@@ -426,10 +370,8 @@ function LoginContent() {
         </div>
       </section>
 
-      {/* 5. Refined Footer */}
-      <footer className="max-w-6xl w-full mx-auto px-4 sm:px-6 md:px-8 py-5 text-center text-[12px] text-[#9B9B9B] border-t border-[#E5DCD4]/60">
-        VaultDrop Cryptographic Engine • 24h file auto-destruction • 30 min session timeout • 100% Free Ephemeral Vault
-      </footer>
+      {/* 5. Production Footer */}
+      <Footer />
     </div>
   );
 }

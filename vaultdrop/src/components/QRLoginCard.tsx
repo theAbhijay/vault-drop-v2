@@ -16,7 +16,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const activeTokenRef = useRef<string | null>(null);
-  const expiryTimestampRef = useRef<number>(Date.now() + 120 * 1000);
+  const expiryTimestampRef = useRef<number>(0);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const tickerTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isTransitioningRef = useRef<boolean>(false);
@@ -47,6 +47,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     };
     localStorage.setItem('vaultdrop_session_user', JSON.stringify(approvedUser));
+    sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
 
     setTimeout(() => {
       onSuccess(username);
@@ -236,10 +237,10 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       <div className="space-y-2 max-w-sm">
         <div className="flex items-center justify-center gap-2 text-[15px] font-semibold text-[#1A1A1A]">
           <Smartphone className="w-4.5 h-4.5 text-[#014BAA]" />
-          <span>Scan with any camera or scanner</span>
+          <span>Instant Phone Unlock</span>
         </div>
         <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-          Open your iPhone Camera, Android Camera, or Google Lens. Point it at this screen and tap the link to approve.
+          If you are logged in on your smartphone, scan this QR code with your camera for instant, zero-keystroke login!
         </p>
       </div>
 

@@ -12,9 +12,12 @@ import {
   Clock, 
   Sparkles,
   CheckSquare,
-  Square
+  Square,
+  Smartphone
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
+import { Footer } from '@/components/Footer';
+import { MobileHandoffModal } from '@/components/MobileHandoffModal';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip } from '@/lib/file-helpers';
@@ -29,18 +32,15 @@ import { BulkActionBar } from '@/components/BulkActionBar';
 import { PanicButton } from '@/components/PanicButton';
 import { IdleWarningBanner } from '@/components/IdleWarningBanner';
 import { AppleColorText } from '@/components/AppleColorText';
-import { DeviceModePill } from '@/components/DeviceModePill';
-import { MobileBottomBar } from '@/components/MobileBottomBar';
 import { MobileFileCard } from '@/components/MobileFileCard';
-import { useDeviceMode } from '@/hooks/useDeviceMode';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { isMobile, deviceMode } = useDeviceMode();
 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isHandoffOpen, setIsHandoffOpen] = useState<boolean>(false);
 
   // Filters & Search
   const [activeFilter, setActiveFilter] = useState<VaultFile['category'] | 'all'>('all');
@@ -52,15 +52,47 @@ export default function DashboardPage() {
   const [previewFile, setPreviewFile] = useState<VaultFile | null>(null);
   const [isZipping, setIsZipping] = useState<boolean>(false);
 
-  // Auth Guard
+  // Strict Auth Guard with Zero-Trust Navigation Protection
   useEffect(() => {
-    const current = getCurrentUser();
-    if (!current) {
-      router.push('/login');
-    } else {
-      setUser(current);
-      loadFiles(current.id);
+    const verifyAuth = () => {
+      const current = getCurrentUser();
+      if (!current) {
+        router.push('/login');
+      } else {
+        setUser(current);
+        loadFiles(current.id);
+      }
+    };
+
+    verifyAuth();
+
+    // Push state so browser Back button immediately triggers popstate
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ vaultdrop: 'active' }, '', window.location.href);
     }
+
+    const handlePopState = async () => {
+      // Back button press immediately terminates session for zero-trace security
+      await logoutUser();
+      router.push('/login?reason=back_navigation');
+    };
+
+    // BFCache / Tab restore: ensure unauthenticated back restores nothing
+    const handlePageShow = async (e: PageTransitionEvent) => {
+      const current = getCurrentUser();
+      if (!current || e.persisted) {
+        await logoutUser();
+        router.push('/login?reason=back_navigation');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('pageshow', handlePageShow);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
   }, [router]);
 
   const loadFiles = async (userId: string) => {
@@ -241,47 +273,56 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#F8F3F0] flex flex-col justify-between selection:bg-[#014BAA] selection:text-white">
       {/* 1. Frosted Glass Top Navigation Bar */}
       <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-4 md:px-8 py-3.5 transition-all">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
-          {/* Logo & Workstation Pill */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
-              <Shield className="w-5 h-5 fill-white" />
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          {/* Logo & User Badge */}
+          <div className="flex items-center gap-2.5 sm:gap-3 flex-shrink-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
+              <Shield className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-white" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[17px] font-bold text-[#014BAA] tracking-tight">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="text-[16px] sm:text-[17px] font-bold text-[#014BAA] tracking-tight">
                   Vault<AppleColorText text="Drop" mode="chars" />
                 </span>
-                <span className="hidden sm:inline-block text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2.5 py-0.5 rounded-full font-mono">
+                <span className="text-[11px] sm:text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2 py-0.5 rounded-full font-mono">
                   @{user.username}
                 </span>
               </div>
-              <span className="text-[11px] text-[#6B6B6B] block font-mono">
+              <span className="hidden sm:block text-[11px] text-[#6B6B6B] font-mono -mt-0.5">
                 Private Ephemeral Vault • <AppleColorText text="Air-Gap Shield" className="text-[11px]" mode="chars" />
               </span>
             </div>
           </div>
 
-          {/* Center / Right: Telemetry & Controls */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <DeviceModePill />
+          {/* Right: Controls, Handoff QR, Telemetry, and Logout */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5">
+            {/* Open on Phone Handoff QR Button (Replaces Device Switcher) */}
+            <button
+              onClick={() => setIsHandoffOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs"
+              title="Open vault on your smartphone without typing password"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-[#014BAA]" />
+              <span className="hidden md:inline">Open on Phone</span>
+              <span className="md:hidden">Phone</span>
+            </button>
 
             {/* Storage Meter */}
             <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
 
-            {/* Session TTL Countdown (Expanded 30m) */}
+            {/* Session TTL Countdown (Strict 30m) */}
             <div 
               title="30-minute session lifetime"
-              className="hidden md:flex items-center gap-1.5 px-3.5 py-2 bg-white/90 rounded-xl border border-[#E5DCD4]/90 text-[12px] font-mono text-[#1A1A1A] shadow-sm"
+              className="hidden lg:flex items-center gap-1.5 px-3 py-2 bg-white/90 rounded-xl border border-[#E5DCD4]/90 text-[12px] font-mono text-[#1A1A1A] shadow-xs"
             >
-              <Clock className="w-4 h-4 text-[#014BAA]" />
+              <Clock className="w-3.5 h-3.5 text-[#014BAA]" />
               <span>TTL: {sessionTimeString}</span>
             </div>
 
-            {/* Security Architecture Link */}
+            {/* Security Whitepaper Link */}
             <Link
               href="/security"
-              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 bg-white/90 hover:bg-white text-[#1A1A1A] hover:text-[#014BAA] rounded-xl border border-[#E5DCD4]/90 text-[12px] font-medium shadow-xs transition-all tap-spring cursor-pointer"
+              className="hidden xl:inline-flex items-center gap-1.5 px-3 py-2 bg-white/90 hover:bg-white text-[#1A1A1A] hover:text-[#014BAA] rounded-xl border border-[#E5DCD4]/90 text-[12px] font-medium shadow-xs transition-all tap-spring cursor-pointer"
               title="Security Whitepaper"
             >
               <Shield className="w-3.5 h-3.5 text-[#014BAA]" />
@@ -289,12 +330,12 @@ export default function DashboardPage() {
             </Link>
 
             {/* Open Source Navbar Link */}
-            <OpenSourceLink className="rounded-xl px-3 py-2 text-[12px]" showLabelOnMobile={false} />
+            <OpenSourceLink className="rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-[12px]" showLabelOnMobile={false} />
 
-            {/* Logout Button */}
+            {/* Lock / Logout Button */}
             <button
               onClick={handleManualLogout}
-              className="p-2 sm:px-3.5 sm:py-2 text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 rounded-xl border border-[#E5DCD4]/70 transition-colors tap-spring cursor-pointer flex items-center gap-1.5 text-[13px] font-semibold"
+              className="p-2 sm:px-3 sm:py-2 text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 rounded-xl border border-[#E5DCD4]/70 transition-colors tap-spring cursor-pointer flex items-center gap-1.5 text-[12px] sm:text-[13px] font-semibold"
               title="End Session & Lock Vault"
             >
               <LogOut className="w-4 h-4" />
@@ -306,34 +347,17 @@ export default function DashboardPage() {
 
       {/* 2. Main Dashboard Content */}
       <main className="max-w-5xl w-full mx-auto px-4 md:px-8 py-6 space-y-6 flex-1">
-        {/* Top Operational Pill Banner (Mode-Aware) */}
-        {isMobile ? (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-gradient-to-r from-blue-50/80 to-purple-50/80 rounded-2xl border border-blue-200/60 text-[13px] text-[#1A1A1A] shadow-xs">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#014BAA] animate-pulse" />
-              <span className="font-medium">
-                📱 Smartphone Vault • Fast Camera Upload & Workstation Bridge
-              </span>
-            </div>
-            <Link
-              href="/pair"
-              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#014BAA] hover:underline"
-            >
-              <span>Pair with Lab PC →</span>
-            </Link>
+        {/* Status Banner */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 sm:p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[12px] sm:text-[13px] text-[#6B6B6B] shadow-apple">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+            <span>Zero credentials typed on shared hardware • <AppleColorText text="Zero Trace Active" className="font-semibold" mode="chars" /></span>
           </div>
-        ) : (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[13px] text-[#6B6B6B] shadow-apple">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Zero credentials typed on workstation • <AppleColorText text="Zero Trace Active" className="text-[12px] font-semibold" mode="chars" /></span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[12px] text-[#014BAA] font-medium font-mono">
-              <Sparkles className="w-4 h-4" />
-              <span>24h auto-destruction enabled</span>
-            </div>
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] text-[#014BAA] font-medium font-mono">
+            <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>24h file auto-destruction</span>
           </div>
-        )}
+        </div>
 
         {/* Drag and Drop Zone */}
         <DropZone onFileUpload={handleUpload} />
@@ -353,7 +377,7 @@ export default function DashboardPage() {
               <button
                 key={chip.id}
                 onClick={() => setActiveFilter(chip.id as VaultFile['category'] | 'all')}
-                className={`px-3.5 py-2 rounded-xl font-medium transition-all tap-spring flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-[12px] sm:text-[13px] font-medium transition-all tap-spring flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                   activeFilter === chip.id
                     ? 'bg-[#014BAA] text-white shadow-sm'
                     : 'bg-white text-[#6B6B6B] border border-[#E5DCD4] hover:text-[#1A1A1A] hover:bg-[#F8F3F0]'
@@ -361,7 +385,7 @@ export default function DashboardPage() {
               >
                 <span>{chip.label}</span>
                 <span
-                  className={`text-[11px] px-2 py-0.5 rounded-full font-mono ${
+                  className={`text-[10px] sm:text-[11px] px-1.5 py-0.5 rounded-full font-mono ${
                     activeFilter === chip.id ? 'bg-white/20 text-white' : 'bg-black/5 text-[#6B6B6B]'
                   }`}
                 >
@@ -380,7 +404,7 @@ export default function DashboardPage() {
                 placeholder="Search files..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-[13px] bg-white border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA]"
+                className="w-full pl-9 pr-3 py-2 text-[12px] sm:text-[13px] bg-white border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA]"
               />
             </div>
 
@@ -388,7 +412,7 @@ export default function DashboardPage() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as 'soonest' | 'newest' | 'size')}
-                className="appearance-none bg-white border border-[#E5DCD4] text-[13px] font-medium text-[#1A1A1A] pl-8 pr-8 py-2 rounded-xl focus:outline-none focus:border-[#014BAA] cursor-pointer"
+                className="appearance-none bg-white border border-[#E5DCD4] text-[12px] sm:text-[13px] font-medium text-[#1A1A1A] pl-8 pr-8 py-2 rounded-xl focus:outline-none focus:border-[#014BAA] cursor-pointer"
               >
                 <option value="soonest">Expiring Soonest</option>
                 <option value="newest">Recently Uploaded</option>
@@ -403,7 +427,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-3xl border border-[#E5DCD4] shadow-apple overflow-hidden">
           {/* Header Row / Select All Toggle */}
           {filteredFiles.length > 0 && (
-            <div className="px-5 py-3 bg-[#F8F3F0]/60 border-b border-[#E5DCD4] flex items-center justify-between text-[13px] text-[#6B6B6B]">
+            <div className="px-5 py-3 bg-[#F8F3F0]/60 border-b border-[#E5DCD4] flex items-center justify-between text-[12px] sm:text-[13px] text-[#6B6B6B]">
               <button
                 onClick={handleSelectAll}
                 className="flex items-center gap-2 font-medium hover:text-[#014BAA] transition-colors tap-spring cursor-pointer"
@@ -416,16 +440,17 @@ export default function DashboardPage() {
                 <span>Select All ({filteredFiles.length})</span>
               </button>
 
-              <span className="font-mono text-[12px] text-[#9B9B9B]">
-                24h Ephemeral Lifetime Active
+              <span className="font-mono text-[11px] sm:text-[12px] text-[#9B9B9B]">
+                24h Auto-Destruction Active
               </span>
             </div>
           )}
 
-          {/* File Rows List (Adaptive PC vs Mobile Experience) */}
+          {/* File Inventory List: Adaptive Desktop Table vs Clean Mobile Cards */}
           {filteredFiles.length > 0 ? (
-            isMobile ? (
-              <div className="p-3 space-y-3 pb-24">
+            <>
+              {/* Mobile View (< 640px): Clean uncluttered cards */}
+              <div className="sm:hidden p-3 space-y-3">
                 {filteredFiles.map((file) => (
                   <MobileFileCard
                     key={file.id}
@@ -438,8 +463,9 @@ export default function DashboardPage() {
                   />
                 ))}
               </div>
-            ) : (
-              <div>
+
+              {/* Desktop View (>= 640px): Standard sleek table rows */}
+              <div className="hidden sm:block">
                 {filteredFiles.map((file) => (
                   <FileRow
                     key={file.id}
@@ -452,26 +478,24 @@ export default function DashboardPage() {
                   />
                 ))}
               </div>
-            )
+            </>
           ) : (
-            /* Empty State with Clear CTA */
-            <div className="p-12 text-center space-y-3.5">
-              <div className="w-18 h-18 bg-[#F8F3F0] rounded-2xl flex items-center justify-center mx-auto text-[#014BAA]">
-                <PackageOpen className="w-9 h-9" />
+            /* Empty State */
+            <div className="p-10 sm:p-14 text-center space-y-3.5">
+              <div className="w-16 h-16 bg-[#F8F3F0] rounded-2xl flex items-center justify-center mx-auto text-[#014BAA]">
+                <PackageOpen className="w-8 h-8" />
               </div>
-              <h3 className="text-[18px] font-bold text-[#1A1A1A]">Your vault is empty</h3>
+              <h3 className="text-[17px] sm:text-[18px] font-bold text-[#1A1A1A]">Your vault is empty</h3>
               <p className="text-[13px] text-[#6B6B6B] max-w-sm mx-auto">
-                Drag files anywhere onto this window, or scan the QR code with your phone to transfer documents to this workstation.
+                Drag files onto the drop zone above or click to browse. Files are encrypted and automatically destroyed after 24 hours.
               </p>
             </div>
           )}
         </div>
       </main>
 
-      {/* 3. Footer */}
-      <footer className="max-w-5xl w-full mx-auto px-4 md:px-8 py-4.5 text-center text-[12px] text-[#9B9B9B] border-t border-[#E5DCD4]/50">
-        VaultDrop Cryptographic Engine • In-Memory Cache • Auto-purges when session expires or browser closes
-      </footer>
+      {/* 3. Production Footer */}
+      <Footer />
 
       {/* 4. Modals & Action Overlays */}
       <FilePreviewModal
@@ -497,14 +521,15 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* 6. Floating Panic Wipe Button (PC Terminal Exclusive) */}
-      {!isMobile && <PanicButton onPanic={handlePanicWipe} />}
+      {/* 6. Floating Panic Wipe Button (Instant 0ms Incineration) */}
+      <PanicButton onPanic={handlePanicWipe} />
 
-      {/* 7. Mobile Thumb Navigation Bar (Smartphone Exclusive) */}
-      {isMobile && (
-        <MobileBottomBar
-          onFileUpload={handleUpload}
-          onLock={handleManualLogout}
+      {/* 7. Mobile Handoff QR Modal */}
+      {user && (
+        <MobileHandoffModal
+          isOpen={isHandoffOpen}
+          onClose={() => setIsHandoffOpen(false)}
+          user={user}
         />
       )}
     </div>

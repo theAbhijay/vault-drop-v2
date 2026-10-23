@@ -12,7 +12,10 @@ import {
   Lock, 
   User, 
   Check, 
-  Shield 
+  Shield,
+  Eye,
+  EyeOff,
+  Smartphone
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { getCurrentUser, loginWithUsername, registerWithUsername } from '@/lib/auth-helpers';
@@ -20,30 +23,63 @@ import { approvePairingSession } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
-import { DeviceModePill } from '@/components/DeviceModePill';
+import { Footer } from '@/components/Footer';
 
 function PairContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get('token');
+  const handoff = searchParams.get('handoff');
+  const uid = searchParams.get('uid');
 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isApproving, setIsApproving] = useState<boolean>(false);
   const [approved, setApproved] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isHandoffProcessing, setIsHandoffProcessing] = useState<boolean>(false);
 
   // Fallback login form states if phone user is not already logged in
   const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // Check current session or process handoff
   useEffect(() => {
+    // 1. Check for PC -> Phone Handoff (instant zero-keystroke login on mobile)
+    if (handoff) {
+      setIsHandoffProcessing(true);
+      const profile: UserProfile = {
+        id: uid || `user_${handoff}`,
+        username: handoff,
+        storageCapMb: 50,
+        usedBytes: 0,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      try {
+        localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
+        sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+      } catch (err) {
+        console.error('Storage error during handoff:', err);
+      }
+
+      const timer = setTimeout(() => {
+        router.push('/');
+      }, 1200);
+
+      return () => clearTimeout(timer);
+    }
+
+    // 2. Regular session check
     const currentUser = getCurrentUser();
     if (currentUser) {
       setUser(currentUser);
     }
-  }, []);
+  }, [handoff, uid, router]);
 
   const handleApprove = async (targetUser?: UserProfile) => {
     const activeUser = targetUser || user;
@@ -101,9 +137,20 @@ function PairContent() {
     }
   };
 
+  if (isHandoffProcessing) {
+    return (
+      <div className="min-h-screen bg-[#F8F3F0] flex flex-col justify-between selection:bg-[#014BAA] selection:text-white">
+        <PeacockLoader
+          message={`Opening Vault for @${handoff}...`}
+          submessage="Handoff authenticated • Connecting mobile browser"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F3F0] flex flex-col justify-between selection:bg-[#014BAA] selection:text-white">
-      {/* Top Frosted Glass Navbar with Open Source Link */}
+      {/* Top Frosted Glass Navbar */}
       <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-4 md:px-8 py-3.5">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -119,7 +166,7 @@ function PairContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/security"
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-[#F8F3F0] text-[#1A1A1A] hover:text-[#014BAA] border border-[#E5DCD4] text-[12px] font-medium shadow-xs transition-all tap-spring"
@@ -127,7 +174,6 @@ function PairContent() {
               <ShieldCheck className="w-3.5 h-3.5 text-[#014BAA]" />
               <span>Security</span>
             </Link>
-            <DeviceModePill />
             <OpenSourceLink className="text-[12px]" />
           </div>
         </div>
@@ -136,17 +182,21 @@ function PairContent() {
       {/* Main Container */}
       <main className="flex-1 flex items-center justify-center p-4 py-8">
         {!token ? (
-          <div className="bg-white p-6 rounded-3xl border border-[#E5DCD4] shadow-apple max-w-sm w-full text-center">
-            <AlertTriangle className="w-12 h-12 text-[#C8102E] mx-auto mb-3" />
-            <h2 className="text-[19px] font-bold text-[#1A1A1A]">Missing Token</h2>
-            <p className="text-[13px] text-[#6B6B6B] mt-1 mb-4">
-              No valid workstation token found. Please scan the QR code on the lab PC monitor.
-            </p>
+          <div className="bg-white p-6 sm:p-8 rounded-3xl border border-[#E5DCD4] shadow-apple max-w-sm w-full text-center space-y-4 animate-in fade-in">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+              <Smartphone className="w-7 h-7" />
+            </div>
+            <div>
+              <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">Workstation Pairing</h2>
+              <p className="text-[13px] text-[#6B6B6B] mt-1.5 leading-relaxed">
+                Scan the dynamic QR code displayed on your PC monitor or use the <span className="font-semibold text-[#014BAA]">Open on Phone</span> button from your PC dashboard to pair automatically.
+              </p>
+            </div>
             <button
-              onClick={() => router.push('/login')}
-              className="w-full py-3 bg-[#014BAA] text-white text-[13px] font-semibold rounded-xl tap-spring cursor-pointer"
+              onClick={() => router.push(user ? '/' : '/login')}
+              className="w-full py-3.5 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer"
             >
-              Go to VaultDrop
+              {user ? 'Return to Dashboard' : 'Open VaultDrop Gateway'}
             </button>
           </div>
         ) : (
@@ -167,7 +217,7 @@ function PairContent() {
                 </div>
               </div>
             ) : user ? (
-              /* User is already logged in on phone -> Option 2 One-Tap "Authorize Lab PC? [Confirm]" */
+              /* User is already logged in on phone -> Option 1 One-Tap "Authorize Lab PC? [Confirm]" */
               <div className="space-y-6">
                 <div className="text-center">
                   <div className="w-14 h-14 bg-[#014BAA]/10 text-[#014BAA] rounded-2xl flex items-center justify-center mx-auto mb-3">
@@ -265,13 +315,22 @@ function PairContent() {
                     <div className="relative">
                       <Lock className="w-4 h-4 text-[#9B9B9B] absolute left-3 top-3.5" />
                       <input
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         required
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full pl-9 pr-3 py-3 text-[13px] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all"
+                        className="w-full pl-9 pr-10 py-3 text-[13px] bg-[#F8F3F0]/60 border border-[#E5DCD4] rounded-xl focus:outline-none focus:border-[#014BAA] focus:bg-white transition-all font-mono"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-3.5 text-[#9B9B9B] hover:text-[#1A1A1A] transition-colors p-0.5 rounded cursor-pointer"
+                        title={showPassword ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
                     </div>
                   </div>
 
@@ -311,10 +370,8 @@ function PairContent() {
         />
       )}
 
-      {/* Footer */}
-      <footer className="max-w-4xl w-full mx-auto text-center text-[11px] text-[#9B9B9B] py-3.5 border-t border-[#E5DCD4]/60">
-        VaultDrop Cryptographic Engine • In-Memory Cache • Zero-Trace Lab Mode
-      </footer>
+      {/* Production Footer */}
+      <Footer />
     </div>
   );
 }
