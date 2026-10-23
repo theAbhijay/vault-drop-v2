@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ Vaultdrop
+# 🛡️ VaultDrop
 
 ### **The Ephemeral, Zero-Trace File Vault Engineered for Shared College Labs**
 
@@ -17,7 +17,7 @@
 
 <br/>
 
-[**Live Demo**](https://vaultdrop.vercel.app) • [**Architecture & Threat Model**](#-the-threat-model--why-vaultdrop-exists) • [**Security Guarantees**](#-zero-trust-security-architecture) • [**Local Quickstart**](#-quick-start-with-bun) • [**Deploy to Vercel**](#-deployment-guide)
+[**Live Demo**](https://VaultDrop.vercel.app) • [**Architecture & Threat Model**](#-the-threat-model--why-VaultDrop-exists) • [**Security Guarantees**](#-zero-trust-security-architecture) • [**Local Quickstart**](#-quick-start-with-bun) • [**Deploy to Vercel**](#-deployment-guide)
 
 ---
 
@@ -25,7 +25,7 @@
 
 <br/>
 
-## ⚠️ The Threat Model: Why Vaultdrop Exists
+## ⚠️ The Threat Model: Why VaultDrop Exists
 
 Every day, millions of students and researchers log into shared computers in university laboratories, library clusters, and internet cafés. To transfer an assignment, code snippet, or slide deck to a lab terminal, users routinely resort to three deeply flawed workarounds:
 
@@ -36,8 +36,8 @@ Every day, millions of students and researchers log into shared computers in uni
 | **USB Flash Drives** | Shared lab PCs are notorious vectors for USB worms, shortcut trojans, and autorun viruses that infect personal drives. | 🔴 **Hardware & Data Malware Infection** |
 | **Physical Keyloggers** | Hardware dongles plugged between keyboard and PC port silently log every master password typed into any field. | 🔴 **Credential Interception** |
 
-### 💡 The Solution: Vaultdrop
-**Vaultdrop eliminates the attack surface completely.** It is an ephemeral, air-gap-inspired bridge between your personal phone and an untrusted computer:
+### 💡 The Solution: VaultDrop
+**VaultDrop eliminates the attack surface completely.** It is an ephemeral, air-gap-inspired bridge between your personal phone and an untrusted computer:
 - **Zero Keystrokes on Shared Hardware**: You never type your password or username on the lab keyboard.
 - **Instant Pair & Auto-Vanish**: Open the site on the lab PC $\rightarrow$ scan the 2-minute dynamic QR code using your phone's native camera $\rightarrow$ authorize $\rightarrow$ the lab PC unlocks automatically.
 - **Air-Tight Session Quarantine**: 30-minute hard TTL auto-wipe + 2-minute idle alert + instant `Esc 3x` Panic Wipe.
@@ -49,7 +49,7 @@ Every day, millions of students and researchers log into shared computers in uni
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            VAULTDROP ARCHITECTURE                           │
+│                            VaultDrop ARCHITECTURE                           │
 │                                                                             │
 │  [ Personal Smartphone ] 📱                     [ Shared Lab PC ] 🖥️        │
 │       │                                                │                    │
@@ -72,7 +72,7 @@ Every day, millions of students and researchers log into shared computers in uni
 - Approving on your phone issues an atomic database transaction (`SELECT ... FOR UPDATE`) that transfers temporary session capability to the lab terminal without ever exposing your user credentials to the lab PC's network or memory.
 
 ### 2. Apple WWDC Interaction Physics & Design System
-Vaultdrop was engineered from the ground up according to the **Apple Human Interface Guidelines**:
+VaultDrop was engineered from the ground up according to the **Apple Human Interface Guidelines**:
 - **Natural Spring Mechanics**: Modal entries, sheet dismissals, and button taps utilize high-tension damping springs (`cubic-bezier(0.16, 1, 0.3, 1)`).
 - **Subtle Frosted Glassmorphism**: Real-time multi-layered backdrop blurs (`backdrop-blur-md`), border translucency, and natural warm canvas palettes (`#F8F3F0`).
 - **High-Readability Typography**: Carefully calibrated font hierarchy scaled up for shared high-resolution monitors and mobile viewports alike.
@@ -106,10 +106,10 @@ Vaultdrop was engineered from the ground up according to the **Apple Human Inter
       Level 5: Physical Storage      Supabase S3 Bucket with strict user isolation
 ```
 
-### 🛡️ Why Vaultdrop is Mathematically & Architecturally Safer
+### 🛡️ Why VaultDrop is Mathematically & Architecturally Safer
 
 1. **Zero-Leak Username Enumeration**:
-   Standard systems expose user emails or reveal user existence via distinct error messages. Vaultdrop implements a PostgreSQL security-definer function `is_username_taken` that checks uniqueness without exposing user IDs, creation dates, or metadata.
+   Standard systems expose user emails or reveal user existence via distinct error messages. VaultDrop implements a PostgreSQL security-definer function `is_username_taken` that checks uniqueness without exposing user IDs, creation dates, or metadata.
 
 2. **Tamper-Proof Storage Quotas**:
    Client-side scripts cannot bypass the 50 MB storage limit. A Postgres `BEFORE INSERT` trigger calculates the current aggregate byte count directly inside the database transaction:
@@ -126,7 +126,7 @@ Vaultdrop was engineered from the ground up according to the **Apple Human Inter
 
 ## 🚀 Quick Start with Bun
 
-Vaultdrop is powered by **Bun** — the ultra-fast JavaScript runtime, bundler, and package manager.
+VaultDrop is powered by **Bun** — the ultra-fast JavaScript runtime, bundler, and package manager.
 
 ### Prerequisites
 - [Bun](https://bun.sh) v1.0.0 or higher installed:
@@ -143,8 +143,8 @@ Vaultdrop is powered by **Bun** — the ultra-fast JavaScript runtime, bundler, 
 
 ### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/theAbhijayChauhan/Vaultdrop.git
-cd Vaultdrop/vaultdrop
+git clone https://github.com/theAbhijayChauhan/VaultDrop.git
+cd VaultDrop/vaultdrop
 ```
 
 ### Step 2: Install Dependencies
@@ -194,7 +194,7 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 3. Add your Environment Variables:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `NEXT_PUBLIC_APP_URL` (Set to your production Vercel URL, e.g. `https://vaultdrop.vercel.app`)
+   - `NEXT_PUBLIC_APP_URL` (Set to your production Vercel URL, e.g. `https://VaultDrop.vercel.app`)
 4. Click **Deploy**. Your zero-trace vault is live!
 
 ---
@@ -219,7 +219,7 @@ Vault Drop/
 │       └── supabase-keep-alive.yml     # Auto-ping cron job to keep Supabase awake
 ├── supabase_schema.sql                 # Production-grade PostgreSQL schema & triggers
 ├── README.md                           # Main documentation & security whitepaper
-└── vaultdrop/
+└── VaultDrop/
     ├── bunfig.toml                     # Bun configuration (NTFS copyfile engine)
     ├── package.json                    # Project dependencies & scripts
     ├── tsconfig.json                   # TypeScript configuration
@@ -260,7 +260,7 @@ Crafted with obsessive attention to privacy, design, and developer experience by
 
 ### **Abhijay Chauhan**
 - **GitHub**: [@theAbhijayChauhan](https://github.com/theAbhijayChauhan)
-- **Project Repository**: [Vaultdrop on GitHub](https://github.com/theAbhijayChauhan/vault-drop)
+- **Project Repository**: [VaultDrop on GitHub](https://github.com/theAbhijayChauhan/vault-drop)
 
 Feel free to star ⭐ the repository if this project helped you stay secure in shared lab environments!
 

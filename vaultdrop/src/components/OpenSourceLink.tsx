@@ -18,8 +18,8 @@ export function OpenSourceLink({
       target="_blank"
       rel="noopener noreferrer"
       className={`group inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-white hover:bg-[#F8F3F0] text-[#1A1A1A] hover:text-[#014BAA] border border-[#E5DCD4] text-[13px] font-medium shadow-sm transition-all duration-200 tap-spring cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#014BAA]/20 ${className}`}
-      title="Open Source Vaultdrop by Abhijay Chauhan on GitHub"
-      aria-label="Open Source Vaultdrop by Abhijay Chauhan on GitHub"
+      title="Open Source VaultDrop by Abhijay Chauhan on GitHub"
+      aria-label="Open Source VaultDrop by Abhijay Chauhan on GitHub"
     >
       <svg
         className="w-3.5 h-3.5 flex-shrink-0 fill-current text-[#1A1A1A] group-hover:text-[#014BAA] transition-colors"

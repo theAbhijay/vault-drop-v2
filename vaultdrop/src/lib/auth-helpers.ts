@@ -104,11 +104,26 @@ export async function registerWithUsername(
     });
 
     if (authError) {
+      if (authError.message.toLowerCase().includes('email signups are disabled')) {
+        return {
+          success: false,
+          error:
+            'Supabase Setup: "Allow new users to sign up" is disabled in your Supabase project. In your Supabase Dashboard: go to Authentication -> Providers -> Email, turn ON "Allow new users to sign up", turn OFF "Confirm email", and click Save.',
+        };
+      }
       return { success: false, error: authError.message };
     }
 
     if (!authData.user) {
       return { success: false, error: 'Failed to create user account.' };
+    }
+
+    // Check if user identity already existed or email confirmation is required
+    if (authData.user.identities && authData.user.identities.length === 0) {
+      return {
+        success: false,
+        error: 'Username already registered. Please sign in or choose a different username.',
+      };
     }
 
     // 3. Touch user activity to initialize 30-day active timer

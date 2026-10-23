@@ -10,7 +10,7 @@ interface QRLoginCardProps {
 }
 
 export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
-  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [qrSvg, setQrSvg] = useState<string>('');
   const [countdown, setCountdown] = useState<number>(120);
   const [status, setStatus] = useState<'loading' | 'waiting' | 'refreshing' | 'approved'>('loading');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -74,16 +74,34 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const pairUrl = `${origin}/pair?token=${newSession.qrToken}`;
 
-      const dataUrl = await QRCode.toDataURL(pairUrl, {
-        width: 280,
-        margin: 2,
+      const rawSvg = await QRCode.toString(pairUrl, {
+        type: 'svg',
+        margin: 1,
         color: {
-          dark: '#014BAA',
+          dark: '#000000',
           light: '#FFFFFF',
         },
       });
 
-      setQrDataUrl(dataUrl);
+      // Inject Apple Spectral Linear Gradient into the SVG definition
+      const gradientDef = `
+        <defs>
+          <linearGradient id="appleQrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0071E3" />
+            <stop offset="25%" stop-color="#5856D6" />
+            <stop offset="50%" stop-color="#AF52DE" />
+            <stop offset="75%" stop-color="#FF2D55" />
+            <stop offset="100%" stop-color="#FF9500" />
+          </linearGradient>
+        </defs>
+      `;
+
+      const styledSvg = rawSvg
+        .replace('<svg ', '<svg class="w-full h-full" ')
+        .replace(/(stroke|fill)="#000000"/g, '$1="url(#appleQrGradient)"')
+        .replace('>', `>${gradientDef}`);
+
+      setQrSvg(styledSvg);
       expiryTimestampRef.current = Date.now() + 120 * 1000; // Reset to 2 minutes
       setCountdown(120);
       setStatus('waiting');
@@ -152,40 +170,49 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
 
   return (
     <div className="flex flex-col items-center text-center">
-      {/* QR Canvas Box */}
-      <div className="relative p-4 bg-white rounded-2xl border border-[#E5DCD4] shadow-apple mb-5 overflow-hidden">
-        {status === 'loading' ? (
-          <div className="w-[280px] h-[280px] flex flex-col items-center justify-center gap-3 bg-[#F8F3F0]/60 rounded-xl">
-            <RefreshCw className="w-8 h-8 text-[#014BAA] animate-spin" />
-            <p className="text-[13px] text-[#6B6B6B] font-medium">Generating secure QR code...</p>
-          </div>
-        ) : status === 'approved' ? (
-          <div className="w-[280px] h-[280px] flex flex-col items-center justify-center gap-3 bg-emerald-50 rounded-xl animate-in fade-in duration-300">
-            <CheckCircle2 className="w-16 h-16 text-[#1B8738] animate-bounce" />
-            <p className="text-[16px] font-semibold text-[#1B8738]">Pairing Approved!</p>
-            <p className="text-[13px] text-[#6B6B6B]">Unlocking vault terminal...</p>
-          </div>
-        ) : (
-          <div className="relative">
-            {qrDataUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={qrDataUrl}
-                alt="Vaultdrop QR Login"
-                className={`w-[280px] h-[280px] rounded-lg transition-opacity duration-300 ${
-                  isRefreshing ? 'opacity-40 filter blur-[1px]' : 'opacity-100'
-                }`}
-              />
-            )}
+      {/* QR Canvas Box with Apple Chromatic Glow & Frame */}
+      <div className="relative p-[2.5px] rounded-3xl bg-gradient-to-tr from-[#0071E3] via-[#AF52DE] via-[#FF2D55] to-[#FF9500] shadow-xl shadow-purple-500/10 mb-5">
+        <div className="relative p-3.5 bg-white rounded-[21px] overflow-hidden">
+          {status === 'loading' ? (
+            <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-3 bg-[#F8F3F0]/60 rounded-xl">
+              <RefreshCw className="w-8 h-8 text-[#014BAA] animate-spin" />
+              <p className="text-[13px] text-[#6B6B6B] font-medium">Generating secure QR code...</p>
+            </div>
+          ) : status === 'approved' ? (
+            <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-3 bg-emerald-50 rounded-xl animate-in fade-in duration-300">
+              <CheckCircle2 className="w-16 h-16 text-[#1B8738] animate-bounce" />
+              <p className="text-[16px] font-semibold text-[#1B8738]">Pairing Approved!</p>
+              <p className="text-[13px] text-[#6B6B6B]">Unlocking vault terminal...</p>
+            </div>
+          ) : (
+            <div className="relative w-[260px] h-[260px] flex items-center justify-center">
+              {qrSvg && (
+                <div
+                  className={`w-full h-full rounded-lg transition-opacity duration-300 ${
+                    isRefreshing ? 'opacity-40 filter blur-[1px]' : 'opacity-100'
+                  }`}
+                  dangerouslySetInnerHTML={{ __html: qrSvg }}
+                />
+              )}
 
-            {isRefreshing && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/70 backdrop-blur-xs rounded-lg animate-in fade-in">
-                <RefreshCw className="w-7 h-7 text-[#014BAA] animate-spin mb-1.5" />
-                <span className="text-[12px] font-semibold text-[#014BAA]">Refreshing Code...</span>
+              {/* Center Logo Badge */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-10 h-10 rounded-xl bg-white/95 backdrop-blur-xs shadow-md border border-[#E5DCD4] flex items-center justify-center p-1">
+                  <div className="w-full h-full rounded-lg bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] flex items-center justify-center text-white">
+                    <ShieldCheck className="w-4 h-4 text-white" />
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {isRefreshing && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-xs rounded-lg animate-in fade-in">
+                  <RefreshCw className="w-7 h-7 text-[#014BAA] animate-spin mb-1.5" />
+                  <span className="text-[12px] font-semibold text-[#014BAA]">Refreshing Code...</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Auto-Refresh Ticker & Manual Refresh Button */}

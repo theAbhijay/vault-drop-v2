@@ -18,6 +18,7 @@ import { getCurrentUser, loginWithUsername, registerWithUsername } from '@/lib/a
 import { approvePairingSession } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
 import { AppleColorText } from '@/components/AppleColorText';
+import { PeacockLoader } from '@/components/PeacockLoader';
 
 function PairContent() {
   const searchParams = useSearchParams();
@@ -108,7 +109,10 @@ function PairContent() {
               <Shield className="w-4.5 h-4.5 fill-white" />
             </div>
             <div>
-              <span className="text-[16px] font-bold tracking-tight text-[#014BAA]">Vaultdrop</span>
+              <div className="flex items-center gap-0.5">
+                <span className="text-[16px] font-bold tracking-tight text-[#014BAA]">Vault</span>
+                <AppleColorText text="Drop" className="text-[16px] font-bold tracking-tight" mode="chars" />
+              </div>
               <span className="text-[11px] text-[#6B6B6B] block -mt-0.5 font-mono">Workstation Pairing</span>
             </div>
           </div>
@@ -130,7 +134,7 @@ function PairContent() {
               onClick={() => router.push('/login')}
               className="w-full py-3 bg-[#014BAA] text-white text-[13px] font-semibold rounded-xl tap-spring cursor-pointer"
             >
-              Go to Vaultdrop
+              Go to VaultDrop
             </button>
           </div>
         ) : (
@@ -287,9 +291,17 @@ function PairContent() {
         )}
       </main>
 
+      {/* Centered Peacock Loader for Mobile Pairing */}
+      {isApproving && (
+        <PeacockLoader
+          message="Authorizing Lab PC..."
+          submessage="Transmitting zero-trace cryptographic certificate"
+        />
+      )}
+
       {/* Footer */}
       <footer className="max-w-4xl w-full mx-auto text-center text-[11px] text-[#9B9B9B] py-3.5 border-t border-[#E5DCD4]/60">
-        Vaultdrop Cryptographic Engine • In-Memory Cache • Zero-Trace Lab Mode
+        VaultDrop Cryptographic Engine • In-Memory Cache • Zero-Trace Lab Mode
       </footer>
     </div>
   );

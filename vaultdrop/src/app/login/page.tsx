@@ -23,6 +23,7 @@ import {
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
+import { PeacockLoader } from '@/components/PeacockLoader';
 import { loginWithUsername, registerWithUsername, getCurrentUser } from '@/lib/auth-helpers';
 
 function LoginContent() {
@@ -55,6 +56,8 @@ function LoginContent() {
       return;
     }
 
+    const minDelay = new Promise((resolve) => setTimeout(resolve, 2000));
+
     try {
       let res;
       if (isRegister) {
@@ -63,12 +66,15 @@ function LoginContent() {
         res = await loginWithUsername(username, password);
       }
 
+      await minDelay; // Guarantee at least 2 full seconds of the peacock loading animation
+
       if (res.success) {
         router.push('/');
       } else {
         setError(res.error || 'Authentication failed.');
       }
     } catch {
+      await minDelay;
       setError('An error occurred during authentication.');
     } finally {
       setLoading(false);
@@ -85,9 +91,9 @@ function LoginContent() {
               <Shield className="w-5 h-5 fill-white" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[17px] font-bold tracking-tight text-[#014BAA]">Vaultdrop</span>
-                <AppleColorText text="like Apple." className="text-[11px] font-semibold ml-1 hidden sm:inline-block" mode="chars" />
+              <div className="flex items-center gap-0.5">
+                <span className="text-[17px] font-bold tracking-tight text-[#014BAA]">Vault</span>
+                <AppleColorText text="Drop" className="text-[17px] font-bold tracking-tight" mode="chars" />
               </div>
               <span className="text-[11px] text-[#6B6B6B] block -mt-0.5 font-mono">v1.0 • Ephemeral File Vault</span>
             </div>
@@ -108,12 +114,12 @@ function LoginContent() {
       <main className="max-w-7xl w-full mx-auto px-4 md:px-8 py-8 md:py-12 flex-1 flex items-center">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
           
-          {/* LEFT COLUMN: What is Vaultdrop? */}
+          {/* LEFT COLUMN: What is VaultDrop? */}
           <div className="lg:col-span-3 space-y-5 order-2 lg:order-1">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#014BAA]/10 text-[#014BAA] text-[12px] font-semibold tracking-wide uppercase font-mono">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Crafted <AppleColorText text="like Apple." className="normal-case text-[12px]" mode="chars" /></span>
+                <span>Zero-Trace Ephemeral Protocol</span>
               </div>
               <h2 className="text-[23px] font-bold text-[#1A1A1A] tracking-tight leading-snug">
                 Private File Vault for <AppleColorText text="Public Labs." mode="chars" />
@@ -208,10 +214,15 @@ function LoginContent() {
 
               {/* Tab 1: QR Code Flow */}
               {activeTab === 'qr' ? (
-                <QRLoginCard onSuccess={() => router.push('/')} />
+                <div key="qr-tab" className="animate-in fade-in duration-200">
+                  <QRLoginCard onSuccess={() => router.push('/')} />
+                </div>
               ) : (
-                /* Tab 2: Direct Username & Password */
-                <div className="space-y-5">
+                /* Tab 2: Direct Username & Password with Apple-grade smooth transition */
+                <div 
+                  key={isRegister ? 'register-mode' : 'login-mode'} 
+                  className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
+                >
                   <div className="text-center">
                     <h3 className="text-[18px] font-bold text-[#1A1A1A] tracking-tight">
                       {isRegister ? 'Create Your Vault' : 'Sign In With Username'}
@@ -224,7 +235,7 @@ function LoginContent() {
                   </div>
 
                   {error && (
-                    <div className="p-3.5 bg-red-50 text-[#C8102E] text-[13px] rounded-xl border border-red-200">
+                    <div className="p-3.5 bg-red-50 text-[#C8102E] text-[13px] rounded-xl border border-red-200 animate-in fade-in">
                       {error}
                     </div>
                   )}
@@ -329,7 +340,7 @@ function LoginContent() {
                   <span>In-Browser Preview & ZIP</span>
                 </div>
                 <p className="text-[13px] text-[#6B6B6B] leading-relaxed">
-                  Verify PDFs, code, and images in a clean Apple modal without downloading. Bulk-export files as a `.zip` in one click.
+                  Verify PDFs, code, and images in a clean sandboxed modal without downloading. Bulk-export files as a `.zip` in one click.
                 </p>
               </div>
 
@@ -348,9 +359,17 @@ function LoginContent() {
         </div>
       </main>
 
-      {/* 3. Refined Footer */}
+      {/* 3. Centered Peacock Loader (guaranteed 2s minimum duration) */}
+      {loading && (
+        <PeacockLoader
+          message={isRegister ? 'Creating Secure Vault...' : 'Unlocking VaultDrop...'}
+          submessage={isRegister ? 'Configuring zero-trace encrypted storage' : 'Verifying credentials & session security'}
+        />
+      )}
+
+      {/* 4. Refined Footer */}
       <footer className="max-w-7xl w-full mx-auto px-4 md:px-8 py-5 text-center text-[12px] text-[#9B9B9B] border-t border-[#E5DCD4]/60">
-        Vaultdrop Cryptographic Engine • 24h file auto-destruction • 30 min session timeout • 100% Free Ephemeral Vault
+        VaultDrop Cryptographic Engine • 24h file auto-destruction • 30 min session timeout • 100% Free Ephemeral Vault
       </footer>
     </div>
   );

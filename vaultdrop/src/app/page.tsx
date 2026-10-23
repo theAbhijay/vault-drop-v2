@@ -243,7 +243,9 @@ export default function DashboardPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[17px] font-bold text-[#014BAA] tracking-tight">Vaultdrop</span>
+                <span className="text-[17px] font-bold text-[#014BAA] tracking-tight">
+                  Vault<AppleColorText text="Drop" mode="chars" />
+                </span>
                 <span className="hidden sm:inline-block text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2.5 py-0.5 rounded-full font-mono">
                   @{user.username}
                 </span>
@@ -417,7 +419,7 @@ export default function DashboardPage() {
 
       {/* 3. Footer */}
       <footer className="max-w-5xl w-full mx-auto px-4 md:px-8 py-4.5 text-center text-[12px] text-[#9B9B9B] border-t border-[#E5DCD4]/50">
-        Vaultdrop Cryptographic Engine • In-Memory Cache • Auto-purges when session expires or browser closes
+        VaultDrop Cryptographic Engine • In-Memory Cache • Auto-purges when session expires or browser closes
       </footer>
 
       {/* 4. Modals & Action Overlays */}

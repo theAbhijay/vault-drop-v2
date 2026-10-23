@@ -15,11 +15,11 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vaultdrop — Ephemeral Private File Vault",
+  title: "VaultDrop — Ephemeral Private File Vault",
   description: "A private, zero-trace file vault engineered for shared computers. Upload from your phone, download from the lab — nothing left behind.",
   icons: {
-    icon: "/icon.svg",
-    apple: "/icon.svg",
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon.svg" }],
   },
 };
 
