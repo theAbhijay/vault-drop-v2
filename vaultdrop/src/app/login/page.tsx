@@ -18,14 +18,18 @@ import {
   Eye,
   EyeOff,
   Flame,
-  ChevronRight
+  ChevronRight,
+  Camera,
+  ScanLine
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
 import { Footer } from '@/components/Footer';
+import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
+import { UserProfile } from '@/lib/types';
 
 type GatewayTab = 'qr' | 'password';
 
@@ -42,14 +46,102 @@ function LoginContent() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Mobile Device Detection for Scene 1
+  const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+
+  // Auto-dismissing alerts
+  const [showPanicAlert, setShowPanicAlert] = useState<boolean>(reason === 'panic');
+  const [showTimeoutAlert, setShowTimeoutAlert] = useState<boolean>(reason === 'timeout');
+  const [showNavAlert, setShowNavAlert] = useState<boolean>(reason === 'back_navigation');
+
   useEffect(() => {
-    // If arriving with a termination reason (timeout/panic/back), ensure session is wiped
+    const checkMobile = () => {
+      const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+      setIsMobileDevice(isMobileUA || (typeof window !== 'undefined' && window.innerWidth < 768));
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Panic Wipe Alert: Strictly disappears after 10 seconds per user request
+  useEffect(() => {
+    if (reason === 'panic') {
+      setShowPanicAlert(true);
+      const timer = setTimeout(() => {
+        setShowPanicAlert(false);
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/login');
+        }
+      }, 10000); // 10 seconds auto-dismiss
+      return () => clearTimeout(timer);
+    }
+  }, [reason]);
+
+  useEffect(() => {
     if (reason) {
       logoutUser();
     } else if (getCurrentUser()) {
       router.push('/');
     }
   }, [reason, router]);
+
+  // Handler for mobile camera scanner decoding
+  const handleScannedQR = (scannedText: string) => {
+    try {
+      // Check if text is a URL with handoff or token
+      let url: URL;
+      try {
+        url = new URL(scannedText);
+      } catch {
+        // Not a full URL, attempt relative
+        url = new URL(scannedText, window.location.origin);
+      }
+
+      const handoffUser = url.searchParams.get('handoff');
+      const uid = url.searchParams.get('uid');
+      const token = url.searchParams.get('token');
+
+      if (handoffUser) {
+        // Scene 1: Instant mobile authentication via PC vault handoff
+        const profile: UserProfile = {
+          id: uid || `user_${handoffUser}`,
+          username: handoffUser,
+          storageCapMb: 50,
+          usedBytes: 0,
+          createdAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        };
+
+        const expiry = (Date.now() + 30 * 60 * 1000).toString();
+        localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
+        localStorage.setItem('vaultdrop_session_expiry', expiry);
+        sessionStorage.setItem('vaultdrop_session_expiry', expiry);
+
+        router.push('/');
+        return;
+      }
+
+      if (token) {
+        router.push(`/pair?token=${token}`);
+        return;
+      }
+
+      // If text itself is a relative path like /pair?token=...
+      if (scannedText.includes('/pair?')) {
+        router.push(scannedText);
+        return;
+      }
+
+      setError('Unrecognized QR code format. Please scan a valid VaultDrop code.');
+    } catch (err) {
+      console.error('Scan processing error:', err);
+      setError('Failed to process scanned QR code.');
+    }
+  };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +164,7 @@ function LoginContent() {
         res = await loginWithUsername(username, password);
       }
 
-      await minDelay; // Guarantee at least 2 full seconds of the peacock loading animation
+      await minDelay; // Guarantee 2s peacock loading screen
 
       if (res.success) {
         router.push('/');
@@ -137,20 +229,20 @@ function LoginContent() {
           </p>
         </div>
 
-        {/* Notice Banners */}
-        {reason === 'timeout' && (
+        {/* Notice Banners (with auto-dismiss for panic wipe) */}
+        {showTimeoutAlert && (
           <div className="w-full max-w-md mb-4 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-[13px] text-amber-800 animate-in fade-in">
             <AlertCircle className="w-4.5 h-4.5 text-amber-600 flex-shrink-0" />
             <span>Vault sealed automatically after 30 minutes of inactivity for your protection.</span>
           </div>
         )}
-        {reason === 'panic' && (
+        {showPanicAlert && (
           <div className="w-full max-w-md mb-4 p-3.5 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-[13px] text-red-800 animate-in fade-in">
             <Shield className="w-4.5 h-4.5 text-red-600 flex-shrink-0" />
             <span>Panic Wipe triggered. All local session tokens incinerated immediately.</span>
           </div>
         )}
-        {reason === 'back_navigation' && (
+        {showNavAlert && (
           <div className="w-full max-w-md mb-4 p-3.5 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-[13px] text-red-800 animate-in fade-in">
             <Shield className="w-4.5 h-4.5 text-red-600 flex-shrink-0" />
             <span>Session Terminated. Browser navigation detected — vault sealed immediately for security.</span>
@@ -196,10 +288,52 @@ function LoginContent() {
             </button>
           </div>
 
-          {/* TAB 1: QR Code Flow (Displays Apple Chromatic Dynamic QR) */}
+          {/* TAB 1: QR Code Flow (Adaptive for Scene 1: Smartphone vs PC) */}
           {activeTab === 'qr' && (
             <div key="tab-qr" className="animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
-              <QRLoginCard onSuccess={() => router.push('/')} />
+              {isMobileDevice ? (
+                /* Scene 1: Smartphone Login Screen -> Blurred Mock QR with Scan Box */
+                <div className="space-y-4 text-center">
+                  <div className="relative w-full max-w-[280px] h-[280px] mx-auto rounded-3xl overflow-hidden border border-[#E5DCD4] bg-[#F8F3F0] flex items-center justify-center p-4">
+                    {/* Blurred Mock Background QR */}
+                    <div className="absolute inset-0 flex items-center justify-center filter blur-[6px] opacity-30 select-none pointer-events-none scale-105">
+                      <div className="w-48 h-48 bg-gradient-to-tr from-[#0071E3] via-[#AF52DE] to-[#FF9500] rounded-2xl flex items-center justify-center text-white">
+                        <QrCode className="w-36 h-36" />
+                      </div>
+                    </div>
+
+                    {/* Centered Overlay Action Box for Scene 1 */}
+                    <div className="relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E5DCD4] shadow-apple p-5 space-y-3 max-w-[240px]">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-sm">
+                        <ScanLine className="w-6 h-6" />
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Log In via QR</h4>
+                        <p className="text-[11px] text-[#6B6B6B] leading-tight">
+                          Point your phone camera at the QR code displayed inside your PC vault
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsScannerOpen(true)}
+                        className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Scan PC QR to Log In</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[12px] text-[#6B6B6B] max-w-xs mx-auto">
+                    Already logged in on your PC? Tap above to open your camera or Google Lens and unlock mobile instantly!
+                  </p>
+                </div>
+              ) : (
+                /* PC Monitor: Real Sharp Chromatic QR Code */
+                <QRLoginCard onSuccess={() => router.push('/')} />
+              )}
             </div>
           )}
 
@@ -303,9 +437,8 @@ function LoginContent() {
         />
       )}
 
-      {/* 4. Rich Information Section (Placed BELOW the Login Box per User Request) */}
+      {/* 4. Rich Information Section */}
       <section className="max-w-5xl w-full mx-auto px-4 sm:px-6 md:px-8 py-12 border-t border-[#E5DCD4]/70 space-y-12">
-        {/* Section Header */}
         <div className="text-center space-y-2">
           <h2 className="text-[22px] sm:text-[26px] font-bold text-[#1A1A1A] tracking-tight">
             Engineered Specifically for <AppleColorText text="Public Computers." mode="chars" />
@@ -315,7 +448,6 @@ function LoginContent() {
           </p>
         </div>
 
-        {/* Feature Grid: 2 Columns of Defense in Depth */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-5 bg-white rounded-2xl border border-[#E5DCD4] shadow-apple space-y-2">
             <div className="flex items-center gap-2 text-[14px] font-bold text-[#014BAA]">
@@ -358,7 +490,6 @@ function LoginContent() {
           </div>
         </div>
 
-        {/* Link to Dedicated Security Page */}
         <div className="text-center pt-2">
           <Link
             href="/security"
@@ -372,6 +503,15 @@ function LoginContent() {
 
       {/* 5. Production Footer */}
       <Footer />
+
+      {/* 6. Camera QR Scanner Modal (Scene 1) */}
+      <CameraQRScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={handleScannedQR}
+        title="Scan PC Monitor QR"
+        subtitle="Point camera at the QR code displayed inside your PC vault"
+      />
     </div>
   );
 }

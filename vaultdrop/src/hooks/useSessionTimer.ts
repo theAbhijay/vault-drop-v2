@@ -23,6 +23,7 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
   const extendSession = useCallback(() => {
     const newExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
     if (typeof window !== 'undefined') {
+      localStorage.setItem(SESSION_STORAGE_KEY, newExpiry.toString());
       sessionStorage.setItem(SESSION_STORAGE_KEY, newExpiry.toString());
     }
     setSecondsRemaining(SESSION_DURATION_SECONDS);
@@ -37,7 +38,7 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
     timeoutFiredRef.current = false;
 
     // Check existing expiry or initialize once
-    let stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    let stored = localStorage.getItem(SESSION_STORAGE_KEY) || sessionStorage.getItem(SESSION_STORAGE_KEY);
     let targetExpiry: number;
 
     if (stored) {
@@ -45,6 +46,7 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
       if (!isNaN(parsed)) {
         if (parsed <= Date.now()) {
           // ALREADY EXPIRED! Terminate session immediately
+          localStorage.removeItem(SESSION_STORAGE_KEY);
           sessionStorage.removeItem(SESSION_STORAGE_KEY);
           timeoutFiredRef.current = true;
           onTimeout();
@@ -53,10 +55,12 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
         targetExpiry = parsed;
       } else {
         targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
+        localStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
         sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
       }
     } else {
       targetExpiry = Date.now() + SESSION_DURATION_SECONDS * 1000;
+      localStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
       sessionStorage.setItem(SESSION_STORAGE_KEY, targetExpiry.toString());
     }
 
@@ -71,6 +75,7 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
         setIsWarning(false);
         if (!timeoutFiredRef.current) {
           timeoutFiredRef.current = true;
+          localStorage.removeItem(SESSION_STORAGE_KEY);
           sessionStorage.removeItem(SESSION_STORAGE_KEY);
           onTimeout();
         }
@@ -90,11 +95,12 @@ export function useSessionTimer({ onTimeout, enabled = true }: UseSessionTimerOp
     // Sleep / Tab Switch Handler: detects if laptop slept or tab was backgrounded for > 5s
     const handleVisibilityOrFocus = () => {
       const now = Date.now();
-      const currentStored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      const currentStored = localStorage.getItem(SESSION_STORAGE_KEY) || sessionStorage.getItem(SESSION_STORAGE_KEY);
       if (currentStored) {
         const parsed = parseInt(currentStored, 10);
         if (parsed <= now) {
           // User was away / laptop was in sleep mode!
+          localStorage.removeItem(SESSION_STORAGE_KEY);
           sessionStorage.removeItem(SESSION_STORAGE_KEY);
           if (!timeoutFiredRef.current) {
             timeoutFiredRef.current = true;

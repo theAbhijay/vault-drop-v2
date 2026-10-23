@@ -13,14 +13,19 @@ import {
   Sparkles,
   CheckSquare,
   Square,
-  Smartphone
+  Smartphone,
+  QrCode,
+  CheckCircle2,
+  HardDrive
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
 import { MobileHandoffModal } from '@/components/MobileHandoffModal';
+import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip } from '@/lib/file-helpers';
+import { approvePairingSession } from '@/lib/pair-helpers';
 import { VaultFile, UserProfile } from '@/lib/types';
 import { useSessionTimer } from '@/hooks/useSessionTimer';
 
@@ -40,7 +45,14 @@ export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Scene 1: PC Modal showing QR for phone
   const [isHandoffOpen, setIsHandoffOpen] = useState<boolean>(false);
+
+  // Scene 2: Smartphone Scanner to unlock PC
+  const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
+  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
+  const [pairSuccessMsg, setPairSuccessMsg] = useState<string | null>(null);
 
   // Filters & Search
   const [activeFilter, setActiveFilter] = useState<VaultFile['category'] | 'all'>('all');
@@ -52,45 +64,45 @@ export default function DashboardPage() {
   const [previewFile, setPreviewFile] = useState<VaultFile | null>(null);
   const [isZipping, setIsZipping] = useState<boolean>(false);
 
-  // Strict Auth Guard with Zero-Trust Navigation Protection
+  // Robust Device Detection
   useEffect(() => {
-    const verifyAuth = () => {
-      const current = getCurrentUser();
-      if (!current) {
-        router.push('/login');
-      } else {
-        setUser(current);
-        loadFiles(current.id);
-      }
+    const checkMobile = () => {
+      const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+      setIsMobileDevice(isMobileUA || (typeof window !== 'undefined' && window.innerWidth < 768));
     };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
-    verifyAuth();
-
-    // Push state so browser Back button immediately triggers popstate
-    if (typeof window !== 'undefined') {
-      window.history.pushState({ vaultdrop: 'active' }, '', window.location.href);
+  // Strict Auth Guard with BFCache Protection (zero Chrome loop/freeze)
+  useEffect(() => {
+    let mounted = true;
+    const current = getCurrentUser();
+    if (!current) {
+      router.replace('/login');
+      return;
     }
 
-    const handlePopState = async () => {
-      // Back button press immediately terminates session for zero-trace security
-      await logoutUser();
-      router.push('/login?reason=back_navigation');
-    };
+    if (mounted) {
+      setUser(current);
+      loadFiles(current.id);
+    }
 
-    // BFCache / Tab restore: ensure unauthenticated back restores nothing
-    const handlePageShow = async (e: PageTransitionEvent) => {
-      const current = getCurrentUser();
-      if (!current || e.persisted) {
-        await logoutUser();
-        router.push('/login?reason=back_navigation');
+    // Only if page was restored from cache (persisted) after logout
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        const recheck = getCurrentUser();
+        if (!recheck) {
+          router.replace('/login');
+        }
       }
     };
 
-    window.addEventListener('popstate', handlePopState);
     window.addEventListener('pageshow', handlePageShow);
-
     return () => {
-      window.removeEventListener('popstate', handlePopState);
+      mounted = false;
       window.removeEventListener('pageshow', handlePageShow);
     };
   }, [router]);
@@ -126,6 +138,33 @@ export default function DashboardPage() {
   const handleManualLogout = async () => {
     await logoutUser();
     router.push('/login');
+  };
+
+  // Scene 2 Handler: Smartphone user inside vault scans PC login QR to unlock PC
+  const handleScanPCFromMobile = async (scannedText: string) => {
+    try {
+      let url: URL;
+      try {
+        url = new URL(scannedText);
+      } catch {
+        url = new URL(scannedText, window.location.origin);
+      }
+
+      const token = url.searchParams.get('token');
+      if (token && user) {
+        const res = await approvePairingSession(token, user);
+        if (res.success) {
+          setPairSuccessMsg(`PC Unlocked! Workstation authenticated as @${user.username}`);
+          setTimeout(() => setPairSuccessMsg(null), 6000);
+        } else {
+          alert(res.error || 'Failed to authorize PC.');
+        }
+      } else {
+        alert('Invalid QR code. Please scan the QR code displayed on the PC login monitor.');
+      }
+    } catch (err) {
+      console.error('Pairing scan error:', err);
+    }
   };
 
   // Upload Handler
@@ -258,7 +297,7 @@ export default function DashboardPage() {
 
   if (loading || !user) {
     return (
-      <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center">
+      <div className="min-h-screen bg-[#F8F3F0] flex items-center justify-center p-4">
         <p className="text-[13px] text-[#6B6B6B] font-mono animate-pulse">Initializing encrypted vault...</p>
       </div>
     );
@@ -270,47 +309,57 @@ export default function DashboardPage() {
   const sessionTimeString = `${timerMin.toString().padStart(2, '0')}:${timerSec.toString().padStart(2, '0')}`;
 
   return (
-    <div className="min-h-screen bg-[#F8F3F0] flex flex-col justify-between selection:bg-[#014BAA] selection:text-white">
-      {/* 1. Frosted Glass Top Navigation Bar */}
-      <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-4 md:px-8 py-3.5 transition-all">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+    <div className="min-h-screen bg-[#F8F3F0] flex flex-col justify-between selection:bg-[#014BAA] selection:text-white overflow-x-hidden">
+      {/* 1. Frosted Glass Top Navigation Bar (Decluttered & Responsive) */}
+      <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-3 sm:px-6 md:px-8 py-2.5 sm:py-3 transition-all">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
           {/* Logo & User Badge */}
-          <div className="flex items-center gap-2.5 sm:gap-3 flex-shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
-              <Shield className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-white" />
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+            <div className="w-8 h-8 rounded-xl sm:rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
+              <Shield className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                <span className="text-[16px] sm:text-[17px] font-bold text-[#014BAA] tracking-tight">
-                  Vault<AppleColorText text="Drop" mode="chars" />
-                </span>
-                <span className="text-[11px] sm:text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2 py-0.5 rounded-full font-mono">
-                  @{user.username}
-                </span>
-              </div>
-              <span className="hidden sm:block text-[11px] text-[#6B6B6B] font-mono -mt-0.5">
-                Private Ephemeral Vault • <AppleColorText text="Air-Gap Shield" className="text-[11px]" mode="chars" />
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="text-[16px] sm:text-[17px] font-bold text-[#014BAA] tracking-tight">
+                Vault<AppleColorText text="Drop" mode="chars" />
+              </span>
+              <span className="hidden sm:inline-block text-[11px] sm:text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2 py-0.5 rounded-full font-mono">
+                @{user.username}
               </span>
             </div>
           </div>
 
-          {/* Right: Controls, Handoff QR, Telemetry, and Logout */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5">
-            {/* Open on Phone Handoff QR Button (Replaces Device Switcher) */}
-            <button
-              onClick={() => setIsHandoffOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs"
-              title="Open vault on your smartphone without typing password"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-[#014BAA]" />
-              <span className="hidden md:inline">Open on Phone</span>
-              <span className="md:hidden">Phone</span>
-            </button>
+          {/* Right Controls: Scene-Aware Button, Storage, Lock */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
+            {/* Scene-Aware Action Button */}
+            {isMobileDevice ? (
+              /* Scene 2: Smartphone user inside vault -> "Log in on PC via QR" */
+              <button
+                onClick={() => setIsScannerOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[11px] sm:text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs whitespace-nowrap"
+                title="Scan PC monitor QR code to unlock lab workstation"
+              >
+                <QrCode className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
+                <span>Log in on PC via QR</span>
+              </button>
+            ) : (
+              /* Scene 1: PC user inside vault -> "Open on Phone via QR" */
+              <button
+                onClick={() => setIsHandoffOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[11px] sm:text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs whitespace-nowrap"
+                title="Show QR code on this screen for your smartphone to scan"
+              >
+                <Smartphone className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
+                <span className="hidden sm:inline">Open on Phone via QR</span>
+                <span className="sm:hidden">Phone</span>
+              </button>
+            )}
 
-            {/* Storage Meter */}
-            <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
+            {/* Storage Meter - Visible in header on desktop (moved to body on mobile) */}
+            <div className="hidden sm:block">
+              <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
+            </div>
 
-            {/* Session TTL Countdown (Strict 30m) */}
+            {/* Session TTL Countdown (Desktop only) */}
             <div 
               title="30-minute session lifetime"
               className="hidden lg:flex items-center gap-1.5 px-3 py-2 bg-white/90 rounded-xl border border-[#E5DCD4]/90 text-[12px] font-mono text-[#1A1A1A] shadow-xs"
@@ -319,23 +368,15 @@ export default function DashboardPage() {
               <span>TTL: {sessionTimeString}</span>
             </div>
 
-            {/* Security Whitepaper Link */}
-            <Link
-              href="/security"
-              className="hidden xl:inline-flex items-center gap-1.5 px-3 py-2 bg-white/90 hover:bg-white text-[#1A1A1A] hover:text-[#014BAA] rounded-xl border border-[#E5DCD4]/90 text-[12px] font-medium shadow-xs transition-all tap-spring cursor-pointer"
-              title="Security Whitepaper"
-            >
-              <Shield className="w-3.5 h-3.5 text-[#014BAA]" />
-              <span>Security</span>
-            </Link>
-
-            {/* Open Source Navbar Link */}
-            <OpenSourceLink className="rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-[12px]" showLabelOnMobile={false} />
+            {/* Open Source Navbar Link (Desktop) */}
+            <div className="hidden md:block">
+              <OpenSourceLink className="rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-[12px]" showLabelOnMobile={false} />
+            </div>
 
             {/* Lock / Logout Button */}
             <button
               onClick={handleManualLogout}
-              className="p-2 sm:px-3 sm:py-2 text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 rounded-xl border border-[#E5DCD4]/70 transition-colors tap-spring cursor-pointer flex items-center gap-1.5 text-[12px] sm:text-[13px] font-semibold"
+              className="p-1.5 sm:px-3 sm:py-2 text-[#6B6B6B] hover:text-[#C8102E] hover:bg-red-50 rounded-xl border border-[#E5DCD4]/70 transition-colors tap-spring cursor-pointer flex items-center gap-1 text-[12px] font-semibold"
               title="End Session & Lock Vault"
             >
               <LogOut className="w-4 h-4" />
@@ -346,9 +387,31 @@ export default function DashboardPage() {
       </header>
 
       {/* 2. Main Dashboard Content */}
-      <main className="max-w-5xl w-full mx-auto px-4 md:px-8 py-6 space-y-6 flex-1">
+      <main className="max-w-5xl w-full mx-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6 flex-1">
+        {/* Pairing Success Toast (Scene 2 confirmation) */}
+        {pairSuccessMsg && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-2.5 text-[13px] text-[#1B8738] shadow-apple animate-in fade-in">
+            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+            <span className="font-medium">{pairSuccessMsg}</span>
+          </div>
+        )}
+
+        {/* Mobile-Only Status Card (Declutters header so no text cuts off on small phones) */}
+        <div className="sm:hidden p-3 bg-white rounded-2xl border border-[#E5DCD4] shadow-xs space-y-2.5">
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="font-semibold text-[#014BAA] font-mono bg-[#014BAA]/10 px-2 py-0.5 rounded-full">
+              @{user.username}
+            </span>
+            <div className="flex items-center gap-1 font-mono text-[11px] text-[#6B6B6B]">
+              <Clock className="w-3 h-3 text-[#014BAA]" />
+              <span>TTL: {sessionTimeString}</span>
+            </div>
+          </div>
+          <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
+        </div>
+
         {/* Status Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 sm:p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[12px] sm:text-[13px] text-[#6B6B6B] shadow-apple">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 p-3 sm:p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[12px] sm:text-[13px] text-[#6B6B6B] shadow-apple">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
             <span>Zero credentials typed on shared hardware • <AppleColorText text="Zero Trace Active" className="font-semibold" mode="chars" /></span>
@@ -363,9 +426,9 @@ export default function DashboardPage() {
         <DropZone onFileUpload={handleUpload} />
 
         {/* Filter Chips & Search Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
           {/* Category Filter Chips */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-[13px]">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 text-[13px] no-scrollbar">
             {[
               { id: 'all', label: 'All', count: counts.all },
               { id: 'image', label: 'Images', count: counts.image },
@@ -427,7 +490,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-3xl border border-[#E5DCD4] shadow-apple overflow-hidden">
           {/* Header Row / Select All Toggle */}
           {filteredFiles.length > 0 && (
-            <div className="px-5 py-3 bg-[#F8F3F0]/60 border-b border-[#E5DCD4] flex items-center justify-between text-[12px] sm:text-[13px] text-[#6B6B6B]">
+            <div className="px-4 sm:px-5 py-3 bg-[#F8F3F0]/60 border-b border-[#E5DCD4] flex items-center justify-between text-[12px] sm:text-[13px] text-[#6B6B6B]">
               <button
                 onClick={handleSelectAll}
                 className="flex items-center gap-2 font-medium hover:text-[#014BAA] transition-colors tap-spring cursor-pointer"
@@ -521,10 +584,10 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* 6. Floating Panic Wipe Button (Instant 0ms Incineration) */}
-      <PanicButton onPanic={handlePanicWipe} />
+      {/* 6. Floating Panic Wipe Button: Desktop ONLY (Hidden on mobile per user request) */}
+      {!isMobileDevice && <PanicButton onPanic={handlePanicWipe} />}
 
-      {/* 7. Mobile Handoff QR Modal */}
+      {/* 7. Scene 1 Modal: PC shows dynamic QR for smartphone to scan */}
       {user && (
         <MobileHandoffModal
           isOpen={isHandoffOpen}
@@ -532,6 +595,15 @@ export default function DashboardPage() {
           user={user}
         />
       )}
+
+      {/* 8. Scene 2 Modal: Smartphone inside vault opens Camera Scanner to unlock PC monitor */}
+      <CameraQRScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={handleScanPCFromMobile}
+        title="Scan PC Login QR"
+        subtitle="Point camera at the QR code on your PC monitor to unlock it instantly"
+      />
     </div>
   );
 }

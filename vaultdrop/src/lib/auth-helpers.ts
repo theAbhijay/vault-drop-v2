@@ -163,8 +163,10 @@ export async function registerWithUsername(
     };
 
     if (typeof window !== 'undefined') {
+      const expiry = (Date.now() + 30 * 60 * 1000).toString();
       localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
-      sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+      localStorage.setItem('vaultdrop_session_expiry', expiry);
+      sessionStorage.setItem('vaultdrop_session_expiry', expiry);
     }
 
     return { success: true, user: profile };
@@ -262,8 +264,10 @@ export async function loginWithUsername(
     };
 
     if (typeof window !== 'undefined') {
+      const expiry = (Date.now() + 30 * 60 * 1000).toString();
       localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
-      sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+      localStorage.setItem('vaultdrop_session_expiry', expiry);
+      sessionStorage.setItem('vaultdrop_session_expiry', expiry);
     }
 
     return { success: true, user: profile };
@@ -293,8 +297,10 @@ export async function loginWithUsername(
       accountExpiresAt: existing.expiresAt,
     };
 
+    const expiry = (Date.now() + 30 * 60 * 1000).toString();
     localStorage.setItem(MOCK_STORAGE_KEY_USER, JSON.stringify(profile));
-    sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+    localStorage.setItem('vaultdrop_session_expiry', expiry);
+    sessionStorage.setItem('vaultdrop_session_expiry', expiry);
     return { success: true, user: profile };
   }
 
@@ -308,7 +314,7 @@ export function getCurrentUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
 
   // Strict 30-minute session lifetime enforcement
-  const sessionExp = sessionStorage.getItem('vaultdrop_session_expiry');
+  const sessionExp = localStorage.getItem('vaultdrop_session_expiry') || sessionStorage.getItem('vaultdrop_session_expiry');
   if (!sessionExp) {
     return null;
   }
@@ -343,6 +349,7 @@ export async function logoutUser(): Promise<void> {
   }
   if (typeof window !== 'undefined') {
     localStorage.removeItem(MOCK_STORAGE_KEY_USER);
+    localStorage.removeItem('vaultdrop_session_expiry');
     sessionStorage.removeItem('vaultdrop_session_expiry');
     document.cookie = 'vaultdrop_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;';
   }

@@ -4,19 +4,27 @@ import React, { useState, useEffect } from 'react';
 import { PeacockLoader } from './PeacockLoader';
 
 export function InitialPageLoader() {
-  const [visible, setVisible] = useState(true);
+  const [visible, setVisible] = useState(false);
   const [fading, setFading] = useState(false);
 
   useEffect(() => {
-    // Run for 1.0 second on website opening
-    const timer = setTimeout(() => {
-      setFading(true);
-      setTimeout(() => {
-        setVisible(false);
-      }, 300); // 300ms fade-out transition
-    }, 1000);
+    if (typeof window !== 'undefined') {
+      const alreadyShown = sessionStorage.getItem('vaultdrop_initial_loader_shown');
+      if (alreadyShown) {
+        return;
+      }
+      sessionStorage.setItem('vaultdrop_initial_loader_shown', 'true');
+      setVisible(true);
 
-    return () => clearTimeout(timer);
+      const timer = setTimeout(() => {
+        setFading(true);
+        setTimeout(() => {
+          setVisible(false);
+        }, 300); // 300ms fade-out transition
+      }, 1000);
+
+      return () => clearTimeout(timer);
+    }
   }, []);
 
   if (!visible) return null;

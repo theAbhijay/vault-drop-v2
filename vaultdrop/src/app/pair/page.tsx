@@ -61,8 +61,10 @@ function PairContent() {
       };
 
       try {
+        const expiry = (Date.now() + 30 * 60 * 1000).toString();
         localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
-        sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+        localStorage.setItem('vaultdrop_session_expiry', expiry);
+        sessionStorage.setItem('vaultdrop_session_expiry', expiry);
       } catch (err) {
         console.error('Storage error during handoff:', err);
       }

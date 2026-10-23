@@ -46,8 +46,10 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
       lastActiveAt: new Date().toISOString(),
       accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     };
+    const expiry = (Date.now() + 30 * 60 * 1000).toString();
     localStorage.setItem('vaultdrop_session_user', JSON.stringify(approvedUser));
-    sessionStorage.setItem('vaultdrop_session_expiry', (Date.now() + 30 * 60 * 1000).toString());
+    localStorage.setItem('vaultdrop_session_expiry', expiry);
+    sessionStorage.setItem('vaultdrop_session_expiry', expiry);
 
     setTimeout(() => {
       onSuccess(username);

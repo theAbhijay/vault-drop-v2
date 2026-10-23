@@ -78,33 +78,33 @@ export function DropZone({ onFileUpload, disabled }: DropZoneProps) {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         onClick={() => !disabled && fileInputRef.current?.click()}
-        className={`relative w-full rounded-3xl border-2 border-dashed p-6 sm:p-10 transition-all duration-200 cursor-pointer flex flex-col items-center justify-center text-center ${
+        className={`relative w-full rounded-3xl border-2 border-dashed p-4 sm:p-10 transition-all duration-200 cursor-pointer flex flex-col items-center justify-center text-center ${
           isDragOver
             ? 'border-[#014BAA] bg-[#014BAA]/5 scale-[1.01]'
             : 'border-[#E5DCD4] bg-white hover:border-[#014BAA]/50 hover:bg-[#F8F3F0]/40'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <div className="w-16 h-16 rounded-2xl bg-[#014BAA]/5 text-[#014BAA] flex items-center justify-center mb-4 transition-transform duration-200 group-hover:scale-105">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl sm:rounded-2xl bg-[#014BAA]/5 text-[#014BAA] flex items-center justify-center mb-3 sm:mb-4 transition-transform duration-200 group-hover:scale-105">
           {isUploading ? (
-            <UploadCloud className="w-8 h-8 animate-bounce" />
+            <UploadCloud className="w-6 h-6 sm:w-8 sm:h-8 animate-bounce" />
           ) : (
-            <FileUp className="w-8 h-8" />
+            <FileUp className="w-6 h-6 sm:w-8 sm:h-8" />
           )}
         </div>
 
-        <h3 className="text-[17px] sm:text-[18px] font-bold text-[#1A1A1A] tracking-tight">
+        <h3 className="text-[15px] sm:text-[18px] font-bold text-[#1A1A1A] tracking-tight">
           {isUploading
             ? 'Staging file into private vault...'
             : isDragOver
             ? 'Drop to upload immediately'
-            : 'Drop files to stage in ephemeral vault'}
+            : 'Drop files to stage in vault'}
         </h3>
 
-        <p className="text-[13px] text-[#6B6B6B] mt-1 max-w-sm">
-          or click to browse from this workstation • Max 20 MB per file
+        <p className="text-[12px] sm:text-[13px] text-[#6B6B6B] mt-1 max-w-sm">
+          or tap to browse from this device • Max 20 MB
         </p>
 
-        <div className="flex items-center gap-2 mt-4 text-[12px] text-[#9B9B9B] font-mono">
+        <div className="flex items-center justify-center flex-wrap gap-1.5 sm:gap-2 mt-3 sm:mt-4 text-[10px] sm:text-[12px] text-[#9B9B9B] font-mono">
           <span>PDF</span>
           <span>•</span>
           <span>Images</span>
