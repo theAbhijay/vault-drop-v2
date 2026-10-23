@@ -18,18 +18,15 @@ import {
   Eye,
   EyeOff,
   Flame,
-  ChevronRight,
-  Camera,
-  ScanLine
+  ChevronRight
 } from 'lucide-react';
 import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
 import { Footer } from '@/components/Footer';
-import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
+import { redirectToGoogleLens, GOOGLE_LENS_INTENT_URL } from '@/lib/google-lens';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
-import { UserProfile } from '@/lib/types';
 
 type GatewayTab = 'qr' | 'password';
 
@@ -48,7 +45,6 @@ function LoginContent() {
 
   // Mobile Device Detection for Scene 1
   const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
-  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
 
   // Auto-dismissing alerts
   const [showPanicAlert, setShowPanicAlert] = useState<boolean>(reason === 'panic');
@@ -87,61 +83,6 @@ function LoginContent() {
       router.push('/');
     }
   }, [reason, router]);
-
-  // Handler for mobile camera scanner decoding
-  const handleScannedQR = (scannedText: string) => {
-    try {
-      // Check if text is a URL with handoff or token
-      let url: URL;
-      try {
-        url = new URL(scannedText);
-      } catch {
-        // Not a full URL, attempt relative
-        url = new URL(scannedText, window.location.origin);
-      }
-
-      const handoffUser = url.searchParams.get('handoff');
-      const uid = url.searchParams.get('uid');
-      const token = url.searchParams.get('token');
-
-      if (handoffUser) {
-        // Scene 1: Instant mobile authentication via PC vault handoff
-        const profile: UserProfile = {
-          id: uid || `user_${handoffUser}`,
-          username: handoffUser,
-          storageCapMb: 50,
-          usedBytes: 0,
-          createdAt: new Date().toISOString(),
-          lastActiveAt: new Date().toISOString(),
-          accountExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        };
-
-        const expiry = (Date.now() + 30 * 60 * 1000).toString();
-        localStorage.setItem('vaultdrop_session_user', JSON.stringify(profile));
-        localStorage.setItem('vaultdrop_session_expiry', expiry);
-        sessionStorage.setItem('vaultdrop_session_expiry', expiry);
-
-        router.push('/');
-        return;
-      }
-
-      if (token) {
-        router.push(`/pair?token=${token}`);
-        return;
-      }
-
-      // If text itself is a relative path like /pair?token=...
-      if (scannedText.includes('/pair?')) {
-        router.push(scannedText);
-        return;
-      }
-
-      setError('Unrecognized QR code format. Please scan a valid VaultDrop code.');
-    } catch (err) {
-      console.error('Scan processing error:', err);
-      setError('Failed to process scanned QR code.');
-    }
-  };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -302,32 +243,32 @@ function LoginContent() {
                       </div>
                     </div>
 
-                    {/* Centered Overlay Action Box for Scene 1 */}
+                    {/* Centered Overlay Action Box for Scene 1 (Direct Google Lens Redirect) */}
                     <div className="relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E5DCD4] shadow-apple p-5 space-y-3 max-w-[240px]">
                       <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white flex items-center justify-center mx-auto shadow-sm">
-                        <ScanLine className="w-6 h-6" />
+                        <Sparkles className="w-6 h-6" />
                       </div>
 
                       <div className="space-y-1">
                         <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Log In via QR</h4>
                         <p className="text-[11px] text-[#6B6B6B] leading-tight">
-                          Point your phone camera at the QR code displayed inside your PC vault
+                          Redirect to Google Lens to scan the QR code displayed inside your PC vault
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setIsScannerOpen(true)}
+                      <a
+                        href={GOOGLE_LENS_INTENT_URL}
+                        onClick={redirectToGoogleLens}
                         className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        <Camera className="w-3.5 h-3.5" />
-                        <span>Scan PC QR to Log In</span>
-                      </button>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Redirect to Google Lens</span>
+                      </a>
                     </div>
                   </div>
 
                   <p className="text-[12px] text-[#6B6B6B] max-w-xs mx-auto">
-                    Already logged in on your PC? Tap above to open your camera or Google Lens and unlock mobile instantly!
+                    Already logged in on your PC? Tap above to redirect directly to Google Lens and scan your PC monitor QR code!
                   </p>
                 </div>
               ) : (
@@ -503,15 +444,6 @@ function LoginContent() {
 
       {/* 5. Production Footer */}
       <Footer />
-
-      {/* 6. Camera QR Scanner Modal (Scene 1) */}
-      <CameraQRScannerModal
-        isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
-        onScan={handleScannedQR}
-        title="Scan PC Monitor QR"
-        subtitle="Point camera at the QR code displayed inside your PC vault"
-      />
     </div>
   );
 }

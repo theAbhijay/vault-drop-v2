@@ -14,18 +14,15 @@ import {
   CheckSquare,
   Square,
   Smartphone,
-  QrCode,
-  CheckCircle2,
-  HardDrive
+  QrCode
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
 import { MobileHandoffModal } from '@/components/MobileHandoffModal';
-import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
+import { redirectToGoogleLens, GOOGLE_LENS_INTENT_URL } from '@/lib/google-lens';
 
 import { getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { getUserFiles, uploadVaultFile, deleteVaultFile, downloadFilesAsZip } from '@/lib/file-helpers';
-import { approvePairingSession } from '@/lib/pair-helpers';
 import { VaultFile, UserProfile } from '@/lib/types';
 import { useSessionTimer } from '@/hooks/useSessionTimer';
 
@@ -49,10 +46,8 @@ export default function DashboardPage() {
   // Scene 1: PC Modal showing QR for phone
   const [isHandoffOpen, setIsHandoffOpen] = useState<boolean>(false);
 
-  // Scene 2: Smartphone Scanner to unlock PC
+  // Scene 2: Smartphone status
   const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false);
-  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
-  const [pairSuccessMsg, setPairSuccessMsg] = useState<string | null>(null);
 
   // Filters & Search
   const [activeFilter, setActiveFilter] = useState<VaultFile['category'] | 'all'>('all');
@@ -138,33 +133,6 @@ export default function DashboardPage() {
   const handleManualLogout = async () => {
     await logoutUser();
     router.push('/login');
-  };
-
-  // Scene 2 Handler: Smartphone user inside vault scans PC login QR to unlock PC
-  const handleScanPCFromMobile = async (scannedText: string) => {
-    try {
-      let url: URL;
-      try {
-        url = new URL(scannedText);
-      } catch {
-        url = new URL(scannedText, window.location.origin);
-      }
-
-      const token = url.searchParams.get('token');
-      if (token && user) {
-        const res = await approvePairingSession(token, user);
-        if (res.success) {
-          setPairSuccessMsg(`PC Unlocked! Workstation authenticated as @${user.username}`);
-          setTimeout(() => setPairSuccessMsg(null), 6000);
-        } else {
-          alert(res.error || 'Failed to authorize PC.');
-        }
-      } else {
-        alert('Invalid QR code. Please scan the QR code displayed on the PC login monitor.');
-      }
-    } catch (err) {
-      console.error('Pairing scan error:', err);
-    }
   };
 
   // Upload Handler
@@ -332,15 +300,16 @@ export default function DashboardPage() {
           <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
             {/* Scene-Aware Action Button */}
             {isMobileDevice ? (
-              /* Scene 2: Smartphone user inside vault -> "Log in on PC via QR" */
-              <button
-                onClick={() => setIsScannerOpen(true)}
+              /* Scene 2: Smartphone user inside vault -> "Log in on PC via QR" (Directly redirects to Google Lens) */
+              <a
+                href={GOOGLE_LENS_INTENT_URL}
+                onClick={redirectToGoogleLens}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[11px] sm:text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs whitespace-nowrap"
-                title="Scan PC monitor QR code to unlock lab workstation"
+                title="Redirect to Google Lens to scan PC monitor"
               >
                 <QrCode className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
                 <span>Log in on PC via QR</span>
-              </button>
+              </a>
             ) : (
               /* Scene 1: PC user inside vault -> "Open on Phone via QR" */
               <button
@@ -388,14 +357,6 @@ export default function DashboardPage() {
 
       {/* 2. Main Dashboard Content */}
       <main className="max-w-5xl w-full mx-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6 flex-1">
-        {/* Pairing Success Toast (Scene 2 confirmation) */}
-        {pairSuccessMsg && (
-          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-2.5 text-[13px] text-[#1B8738] shadow-apple animate-in fade-in">
-            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-            <span className="font-medium">{pairSuccessMsg}</span>
-          </div>
-        )}
-
         {/* Mobile-Only Status Card (Declutters header so no text cuts off on small phones) */}
         <div className="sm:hidden p-3 bg-white rounded-2xl border border-[#E5DCD4] shadow-xs space-y-2.5">
           <div className="flex items-center justify-between text-[12px]">
@@ -595,15 +556,6 @@ export default function DashboardPage() {
           user={user}
         />
       )}
-
-      {/* 8. Scene 2 Modal: Smartphone inside vault opens Camera Scanner to unlock PC monitor */}
-      <CameraQRScannerModal
-        isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
-        onScan={handleScanPCFromMobile}
-        title="Scan PC Login QR"
-        subtitle="Point camera at the QR code on your PC monitor to unlock it instantly"
-      />
     </div>
   );
 }

@@ -217,6 +217,12 @@ function PairContent() {
                 <div className="p-3.5 bg-[#F8F3F0] rounded-xl border border-[#E5DCD4] text-[12px] text-[#6B6B6B] text-left">
                   🔒 <strong>Privacy note:</strong> You never typed your password on the lab keyboard. Your files will auto-delete in 24 hours, and your session auto-locks when idle.
                 </div>
+                <button
+                  onClick={() => router.push('/')}
+                  className="w-full py-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer"
+                >
+                  Return to Vault on Phone
+                </button>
               </div>
             ) : user ? (
               /* User is already logged in on phone -> Option 1 One-Tap "Authorize Lab PC? [Confirm]" */
