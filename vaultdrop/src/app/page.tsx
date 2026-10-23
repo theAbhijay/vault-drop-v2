@@ -305,7 +305,7 @@ export default function DashboardPage() {
                 href={GOOGLE_LENS_INTENT_URL}
                 onClick={redirectToGoogleLens}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-tr from-[#0071E3]/10 to-[#AF52DE]/10 hover:from-[#0071E3]/20 hover:to-[#AF52DE]/20 text-[#014BAA] border border-[#0071E3]/30 rounded-xl text-[11px] sm:text-[12px] font-semibold transition-all tap-spring cursor-pointer shadow-xs whitespace-nowrap"
-                title="Redirect to Google Lens to scan PC monitor"
+                title="Open Google Lens to scan PC monitor"
               >
                 <QrCode className="w-3.5 h-3.5 text-[#014BAA] flex-shrink-0" />
                 <span>Log in on PC via QR</span>

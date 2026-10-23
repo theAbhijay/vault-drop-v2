@@ -252,7 +252,7 @@ function LoginContent() {
                       <div className="space-y-1">
                         <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Log In via QR</h4>
                         <p className="text-[11px] text-[#6B6B6B] leading-tight">
-                          Redirect to Google Lens to scan the QR code displayed inside your PC vault
+                          Open Google Lens to scan the QR code displayed inside your PC vault
                         </p>
                       </div>
 
@@ -262,13 +262,13 @@ function LoginContent() {
                         className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[12px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Redirect to Google Lens</span>
+                        <span>Open Google Lens</span>
                       </a>
                     </div>
                   </div>
 
                   <p className="text-[12px] text-[#6B6B6B] max-w-xs mx-auto">
-                    Already logged in on your PC? Tap above to redirect directly to Google Lens and scan your PC monitor QR code!
+                    Already logged in on your PC? Tap above to open Google Lens and scan your PC monitor QR code!
                   </p>
                 </div>
               ) : (

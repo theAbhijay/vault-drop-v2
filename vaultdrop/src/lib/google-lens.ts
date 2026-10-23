@@ -1,33 +1,31 @@
 /**
- * Google Lens Redirect Utilities
- * Launches Google Lens directly on mobile devices without any in-browser camera window.
+ * Direct launch for Google Lens application on mobile devices.
+ * Uses native Android app intent and iOS Google App scheme.
+ * Zero search site URLs.
  */
 
 export const GOOGLE_LENS_INTENT_URL =
-  'intent://#Intent;package=com.google.ar.lens;component=com.google.ar.lens/com.google.vr.apps.ornament.app.lens.LensLauncherActivity;S.browser_fallback_url=https%3A%2F%2Flens.google.com;end;';
+  'intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=com.google.ar.lens;end;';
 
 export function redirectToGoogleLens(e?: React.MouseEvent) {
   if (e) {
-    // If inside a button click handler, prevent duplicate default navigation if handled manually
     e.preventDefault();
   }
 
   if (typeof window === 'undefined') return;
 
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const userAgent = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(userAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
 
   if (isAndroid) {
-    // Android: Direct Google Lens App Intent
+    // Launch Google Lens app directly via Android Launcher intent
     window.location.href = GOOGLE_LENS_INTENT_URL;
   } else if (isIOS) {
-    // iOS: Open Google App Lens or web Lens
+    // Launch Google App Lens on iOS
     window.location.href = 'googleapp://lens';
-    setTimeout(() => {
-      window.location.href = 'https://lens.google.com';
-    }, 500);
   } else {
-    // Desktop: Web Google Lens
-    window.open('https://lens.google.com', '_blank', 'noopener,noreferrer');
+    // On desktop PC, inform the user clearly
+    alert('Google Lens is an app on your smartphone. Please open VaultDrop on your phone to scan the PC screen.');
   }
 }

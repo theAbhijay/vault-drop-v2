@@ -76,6 +76,17 @@ export function getExpiryLabel(expiresAt: string): { label: string; isUrgent: bo
   };
 }
 
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /**
  * Upload a file to user's ephemeral vault.
  * Validates constraints (filename 1-255, MIME 1-100, size <= 20MB, quota <= 50MB).
@@ -107,7 +118,7 @@ export async function uploadVaultFile(
     return { success: false, error: 'Storage cap exceeded. Total vault usage cannot exceed 50 MB.' };
   }
 
-  const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const fileId = generateUUID();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
   const category = getFileCategory(file.name, mimeType);
 
