@@ -1,6 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+};
 
 const inter = Inter({
   variable: "--font-inter",
@@ -23,6 +30,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { InitialPageLoader } from "@/components/InitialPageLoader";
+
 export default function RootLayout({
   children,
 }: {
@@ -31,6 +40,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="min-h-screen bg-[#F8F3F0] text-[#1A1A1A] antialiased selection:bg-[#014BAA] selection:text-white">
+        <InitialPageLoader />
         {children}
       </body>
     </html>

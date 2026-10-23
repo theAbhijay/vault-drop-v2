@@ -278,6 +278,16 @@ export default function DashboardPage() {
               <span>TTL: {sessionTimeString}</span>
             </div>
 
+            {/* Security Architecture Link */}
+            <Link
+              href="/security"
+              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 bg-white/90 hover:bg-white text-[#1A1A1A] hover:text-[#014BAA] rounded-xl border border-[#E5DCD4]/90 text-[12px] font-medium shadow-xs transition-all tap-spring cursor-pointer"
+              title="Security Whitepaper"
+            >
+              <Shield className="w-3.5 h-3.5 text-[#014BAA]" />
+              <span>Security</span>
+            </Link>
+
             {/* Open Source Navbar Link */}
             <OpenSourceLink className="rounded-xl px-3 py-2 text-[12px]" showLabelOnMobile={false} />
 

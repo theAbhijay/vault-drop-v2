@@ -28,7 +28,7 @@ export function DeviceModePill({ className = '', onModeChange }: DeviceModePillP
       <button
         type="button"
         onClick={() => handleSelect('pc')}
-        className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold transition-all tap-spring cursor-pointer ${
+        className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-[12px] font-semibold transition-all tap-spring cursor-pointer ${
           deviceMode === 'pc'
             ? 'bg-white text-[#014BAA] shadow-xs'
             : 'text-[#6B6B6B] hover:text-[#1A1A1A]'
@@ -36,13 +36,13 @@ export function DeviceModePill({ className = '', onModeChange }: DeviceModePillP
         title="Switch to Lab PC Terminal Experience"
       >
         <Laptop className="w-3.5 h-3.5" />
-        <span>PC Terminal</span>
+        <span className="hidden sm:inline">PC</span>
       </button>
 
       <button
         type="button"
         onClick={() => handleSelect('mobile')}
-        className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold transition-all tap-spring cursor-pointer ${
+        className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-[12px] font-semibold transition-all tap-spring cursor-pointer ${
           deviceMode === 'mobile'
             ? 'bg-white text-[#014BAA] shadow-xs'
             : 'text-[#6B6B6B] hover:text-[#1A1A1A]'
@@ -50,7 +50,7 @@ export function DeviceModePill({ className = '', onModeChange }: DeviceModePillP
         title="Switch to Smartphone Vault Experience"
       >
         <Smartphone className="w-3.5 h-3.5" />
-        <span>Smartphone</span>
+        <span className="hidden sm:inline">Phone</span>
       </button>
     </div>
   );

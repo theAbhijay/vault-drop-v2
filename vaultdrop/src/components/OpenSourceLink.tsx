@@ -10,7 +10,7 @@ interface OpenSourceLinkProps {
 
 export function OpenSourceLink({ 
   className = '', 
-  showLabelOnMobile = true 
+  showLabelOnMobile = false 
 }: OpenSourceLinkProps) {
   return (
     <a

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
   ShieldCheck, 
   Laptop, 
@@ -118,7 +119,14 @@ function PairContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            <Link
+              href="/security"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-[#F8F3F0] text-[#1A1A1A] hover:text-[#014BAA] border border-[#E5DCD4] text-[12px] font-medium shadow-xs transition-all tap-spring"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-[#014BAA]" />
+              <span>Security</span>
+            </Link>
             <DeviceModePill />
             <OpenSourceLink className="text-[12px]" />
           </div>
