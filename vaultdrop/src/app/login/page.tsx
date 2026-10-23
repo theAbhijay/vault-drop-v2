@@ -24,12 +24,15 @@ import { QRLoginCard } from '@/components/QRLoginCard';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
+import { DeviceModePill } from '@/components/DeviceModePill';
+import { useDeviceMode } from '@/hooks/useDeviceMode';
 import { loginWithUsername, registerWithUsername, getCurrentUser } from '@/lib/auth-helpers';
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams.get('reason');
+  const { isMobile, deviceMode, switchMode } = useDeviceMode();
 
   const [activeTab, setActiveTab] = useState<'qr' | 'password'>('qr');
   const [isRegister, setIsRegister] = useState<boolean>(false);
@@ -37,6 +40,15 @@ function LoginContent() {
   const [password, setPassword] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Intelligently select default tab based on detected device
+  useEffect(() => {
+    if (isMobile) {
+      setActiveTab('password');
+    } else {
+      setActiveTab('qr');
+    }
+  }, [isMobile]);
 
   useEffect(() => {
     // If already logged in and not coming from panic/timeout, redirect to dashboard
@@ -99,12 +111,15 @@ function LoginContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <DeviceModePill />
             <OpenSourceLink />
 
-            <div className="hidden sm:flex items-center gap-2 text-[13px] text-[#6B6B6B] bg-white px-3.5 py-1.5 rounded-full border border-[#E5DCD4] shadow-sm">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="font-medium text-[#1A1A1A]">Shared Terminal Mode Active</span>
+            <div className="hidden lg:flex items-center gap-2 text-[13px] text-[#6B6B6B] bg-white px-3.5 py-1.5 rounded-full border border-[#E5DCD4] shadow-sm">
+              <span className={`w-2.5 h-2.5 rounded-full ${deviceMode === 'pc' ? 'bg-emerald-500 animate-pulse' : 'bg-[#014BAA]'}`} />
+              <span className="font-medium text-[#1A1A1A]">
+                {deviceMode === 'pc' ? 'Lab Terminal Active' : 'Personal Phone Active'}
+              </span>
             </div>
           </div>
         </div>

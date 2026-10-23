@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
   Shield, 
   LogOut, 
@@ -28,9 +29,14 @@ import { BulkActionBar } from '@/components/BulkActionBar';
 import { PanicButton } from '@/components/PanicButton';
 import { IdleWarningBanner } from '@/components/IdleWarningBanner';
 import { AppleColorText } from '@/components/AppleColorText';
+import { DeviceModePill } from '@/components/DeviceModePill';
+import { MobileBottomBar } from '@/components/MobileBottomBar';
+import { MobileFileCard } from '@/components/MobileFileCard';
+import { useDeviceMode } from '@/hooks/useDeviceMode';
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { isMobile, deviceMode } = useDeviceMode();
 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [files, setFiles] = useState<VaultFile[]>([]);
@@ -257,7 +263,9 @@ export default function DashboardPage() {
           </div>
 
           {/* Center / Right: Telemetry & Controls */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <DeviceModePill />
+
             {/* Storage Meter */}
             <StorageMeter usedBytes={totalUsedBytes} totalCapMb={user.storageCapMb} />
 
@@ -288,17 +296,34 @@ export default function DashboardPage() {
 
       {/* 2. Main Dashboard Content */}
       <main className="max-w-5xl w-full mx-auto px-4 md:px-8 py-6 space-y-6 flex-1">
-        {/* Top Operational Pill Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[13px] text-[#6B6B6B] shadow-apple">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Zero credentials typed on workstation • <AppleColorText text="Zero Trace Active" className="text-[12px] font-semibold" mode="chars" /></span>
+        {/* Top Operational Pill Banner (Mode-Aware) */}
+        {isMobile ? (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-gradient-to-r from-blue-50/80 to-purple-50/80 rounded-2xl border border-blue-200/60 text-[13px] text-[#1A1A1A] shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#014BAA] animate-pulse" />
+              <span className="font-medium">
+                📱 Smartphone Vault • Fast Camera Upload & Workstation Bridge
+              </span>
+            </div>
+            <Link
+              href="/pair"
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#014BAA] hover:underline"
+            >
+              <span>Pair with Lab PC →</span>
+            </Link>
           </div>
-          <div className="flex items-center gap-1.5 text-[12px] text-[#014BAA] font-medium font-mono">
-            <Sparkles className="w-4 h-4" />
-            <span>24h auto-destruction enabled</span>
+        ) : (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 bg-white rounded-2xl border border-[#E5DCD4] text-[13px] text-[#6B6B6B] shadow-apple">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Zero credentials typed on workstation • <AppleColorText text="Zero Trace Active" className="text-[12px] font-semibold" mode="chars" /></span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[12px] text-[#014BAA] font-medium font-mono">
+              <Sparkles className="w-4 h-4" />
+              <span>24h auto-destruction enabled</span>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Drag and Drop Zone */}
         <DropZone onFileUpload={handleUpload} />
@@ -387,21 +412,37 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* File Rows List */}
+          {/* File Rows List (Adaptive PC vs Mobile Experience) */}
           {filteredFiles.length > 0 ? (
-            <div>
-              {filteredFiles.map((file) => (
-                <FileRow
-                  key={file.id}
-                  file={file}
-                  isSelected={selectedFileIds.has(file.id)}
-                  onToggleSelect={handleToggleSelect}
-                  onPreview={setPreviewFile}
-                  onDownload={handleDownload}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
+            isMobile ? (
+              <div className="p-3 space-y-3 pb-24">
+                {filteredFiles.map((file) => (
+                  <MobileFileCard
+                    key={file.id}
+                    file={file}
+                    isSelected={selectedFileIds.has(file.id)}
+                    onToggleSelect={handleToggleSelect}
+                    onPreview={setPreviewFile}
+                    onDownload={handleDownload}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div>
+                {filteredFiles.map((file) => (
+                  <FileRow
+                    key={file.id}
+                    file={file}
+                    isSelected={selectedFileIds.has(file.id)}
+                    onToggleSelect={handleToggleSelect}
+                    onPreview={setPreviewFile}
+                    onDownload={handleDownload}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            )
           ) : (
             /* Empty State with Clear CTA */
             <div className="p-12 text-center space-y-3.5">
@@ -446,8 +487,16 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* 6. Floating Panic Wipe Button */}
-      <PanicButton onPanic={handlePanicWipe} />
+      {/* 6. Floating Panic Wipe Button (PC Terminal Exclusive) */}
+      {!isMobile && <PanicButton onPanic={handlePanicWipe} />}
+
+      {/* 7. Mobile Thumb Navigation Bar (Smartphone Exclusive) */}
+      {isMobile && (
+        <MobileBottomBar
+          onFileUpload={handleUpload}
+          onLock={handleManualLogout}
+        />
+      )}
     </div>
   );
 }

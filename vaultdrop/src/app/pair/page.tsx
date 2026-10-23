@@ -19,6 +19,7 @@ import { approvePairingSession } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
 import { AppleColorText } from '@/components/AppleColorText';
 import { PeacockLoader } from '@/components/PeacockLoader';
+import { DeviceModePill } from '@/components/DeviceModePill';
 
 function PairContent() {
   const searchParams = useSearchParams();
@@ -117,7 +118,10 @@ function PairContent() {
             </div>
           </div>
 
-          <OpenSourceLink className="text-[12px]" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <DeviceModePill />
+            <OpenSourceLink className="text-[12px]" />
+          </div>
         </div>
       </header>
 
