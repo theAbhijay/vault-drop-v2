@@ -243,7 +243,7 @@ function PairContent() {
       <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-4 md:px-8 py-3.5">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
+            <div className="w-8 h-8 rounded-xl vd-flow flex items-center justify-center text-white shadow-apple">
               <Shield className="w-4.5 h-4.5 fill-white" />
             </div>
             <div>
@@ -298,7 +298,9 @@ function PairContent() {
         <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
           <AlertTriangle className="w-7 h-7" />
         </div>
-        <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">Pairing Code Invalid</h2>
+        <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
+            Pairing <AppleColorText text="Code Invalid" mode="chars" />
+          </h2>
         <p className="text-[13px] text-[#6B6B6B] mt-1.5 leading-relaxed">{mode.message}</p>
         <button
           onClick={() => router.push(user ? '/' : '/login')}
@@ -317,7 +319,9 @@ function PairContent() {
           <Smartphone className="w-7 h-7" />
         </div>
         <div>
-          <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">Workstation Pairing</h2>
+          <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
+            Workstation <AppleColorText text="Pairing" mode="chars" />
+          </h2>
           <p className="text-[13px] text-[#6B6B6B] mt-1.5 leading-relaxed">
             Scan the dynamic QR code displayed on your PC monitor, or use the{' '}
             <span className="font-semibold text-[#014BAA]">Open on Phone</span> button from your PC dashboard.
@@ -342,7 +346,9 @@ function PairContent() {
             <CheckCircle2 className="w-12 h-12" />
           </div>
           <div>
-            <h2 className="text-[22px] font-bold text-[#1A1A1A] tracking-tight">Terminal Unlocked!</h2>
+            <h2 className="text-[22px] font-bold text-[#1A1A1A] tracking-tight">
+              Terminal <AppleColorText text="Unlocked!" mode="chars" />
+            </h2>
             <p className="text-[13px] text-[#6B6B6B] mt-1.5 max-w-xs mx-auto">
               The lab computer has been authorized as{' '}
               <span className="font-semibold text-[#014BAA]">@{user?.username}</span>. You can now put away your phone

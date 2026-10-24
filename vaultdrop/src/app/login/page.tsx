@@ -168,7 +168,7 @@ function LoginContent() {
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
           {/* Brand Logo */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl vd-flow flex items-center justify-center text-white shadow-apple">
               <Shield className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-white" />
             </div>
             <div>
@@ -196,9 +196,9 @@ function LoginContent() {
       </header>
 
       {/* 2. Main Hero: Centered Gateway + Desktop Side Panels */}
-      <main className="max-w-6xl w-full mx-auto px-4 py-8 sm:py-12 flex-1 flex flex-col items-center justify-center">
+      <main className="max-w-6xl w-full mx-auto px-4 py-5 sm:py-8 flex-1 flex flex-col items-center justify-center">
         {/* Hero Title */}
-        <div className="text-center space-y-2 mb-6 sm:mb-8 max-w-lg mx-auto">
+        <div className="text-center space-y-2 mb-4 sm:mb-6 max-w-lg mx-auto">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#014BAA]/10 text-[#014BAA] text-[11px] sm:text-[12px] font-semibold tracking-wide uppercase font-mono">
             <Sparkles className="w-3.5 h-3.5" />
             <span>Zero-Trace Ephemeral Gateway</span>
@@ -367,11 +367,19 @@ function LoginContent() {
           {activeTab === 'password' && (
             <div
               key={isRegister ? 'register-mode' : 'login-mode'}
-              className="space-y-5 animate-in fade-in zoom-in-95 slide-in-from-bottom-8 duration-500 [animation-timing-function:cubic-bezier(0.16,1,0.3,1)]"
+              className="space-y-5 vd-mode-switch"
             >
               <div className="text-center">
                 <h3 className="text-[18px] font-bold text-[#1A1A1A] tracking-tight">
-                  {isRegister ? 'Create Your Vault' : 'Sign In With Username'}
+                  {isRegister ? (
+                    <>
+                      Create <AppleColorText text="Your Vault" mode="chars" />
+                    </>
+                  ) : (
+                    <>
+                      Sign In <AppleColorText text="With Username" mode="chars" />
+                    </>
+                  )}
                 </h3>
                 <p className="text-[13px] text-[#6B6B6B] mt-1">
                   {isRegister

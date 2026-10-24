@@ -447,7 +447,7 @@ export default function DashboardPage() {
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
           {/* Logo & User Badge */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <div className="w-8 h-8 rounded-xl sm:rounded-2xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
+            <div className="w-8 h-8 rounded-xl sm:rounded-2xl vd-flow flex items-center justify-center text-white shadow-apple">
               <Shield className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -709,7 +709,9 @@ export default function DashboardPage() {
               <div className="w-16 h-16 bg-[#F8F3F0] rounded-2xl flex items-center justify-center mx-auto text-[#014BAA]">
                 <PackageOpen className="w-8 h-8" />
               </div>
-              <h3 className="text-[17px] sm:text-[18px] font-bold text-[#1A1A1A]">Your vault is empty</h3>
+              <h3 className="text-[17px] sm:text-[18px] font-bold text-[#1A1A1A]">
+                Your vault <AppleColorText text="is empty" mode="chars" />
+              </h3>
               <p className="text-[13px] text-[#6B6B6B] max-w-sm mx-auto">
                 Drag files onto the drop zone above or click to browse. Files live in a private,
                 encrypted-at-rest vault and are automatically destroyed after 24 hours.

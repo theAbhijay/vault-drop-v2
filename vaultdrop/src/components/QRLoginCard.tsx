@@ -275,7 +275,7 @@ export function QRLoginCard({ onSuccess }: QRLoginCardProps) {
               {/* Center Logo Badge */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="w-10 h-10 rounded-xl bg-white/95 backdrop-blur-xs shadow-md border border-[#E5DCD4] flex items-center justify-center p-1">
-                  <div className="w-full h-full rounded-lg bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] flex items-center justify-center text-white">
+                  <div className="vd-flow w-full h-full rounded-lg flex items-center justify-center text-white">
                     <ShieldCheck className="w-4 h-4 text-white" />
                   </div>
                 </div>

@@ -346,9 +346,11 @@ CREATE TRIGGER enforce_storage_quota_trigger
     BEFORE INSERT ON public.files
     FOR EACH ROW EXECUTE FUNCTION public.enforce_storage_quota();
 
--- 6.6 Delete the Storage object when a files row is deleted (prevents orphaned
---     blobs). The storage_path CHECK constraint guarantees this can only ever
---     touch an object inside OLD.owner_id's own folder.
+-- 6.6 Best-effort storage cleanup when a files row is deleted.
+--     NOTE: modern Supabase BLOCKS direct DELETEs on storage.objects from SQL
+--     ("Use the Storage API instead"). The app therefore removes blobs through
+--     the Storage API BEFORE deleting the row; this trigger is a swallowed,
+--     best-effort safety net that must never abort the row operation.
 CREATE OR REPLACE FUNCTION public.delete_storage_object()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -356,8 +358,12 @@ SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
 BEGIN
-    DELETE FROM storage.objects
-    WHERE bucket_id = 'vault' AND name = OLD.storage_path;
+    BEGIN
+        DELETE FROM storage.objects
+        WHERE bucket_id = 'vault' AND name = OLD.storage_path;
+    EXCEPTION WHEN OTHERS THEN
+        NULL; -- guarded by Supabase Storage — never abort the files-row delete
+    END;
     RETURN OLD;
 END;
 $$;

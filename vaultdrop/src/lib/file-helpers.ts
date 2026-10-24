@@ -425,11 +425,36 @@ export async function getUserFiles(
 }
 
 /**
- * Delete a specific file — VERIFIED. Returns true only when the database row
- * was actually deleted (which also fires the storage-cleanup trigger).
+ * Delete a specific file — VERIFIED. Supabase blocks SQL-level blob deletes,
+ * so the blob is removed through the Storage API FIRST, then the database row
+ * (which also fires the best-effort cleanup trigger). Returns true only when
+ * the database row was actually deleted.
  */
 export async function deleteVaultFile(userId: string, fileId: string): Promise<boolean> {
   if (isSupabaseConfigured && supabase) {
+    // 1. Remove the blob via the Storage API (path comes from the row itself)
+    let storagePath: string | undefined;
+    try {
+      const { data: row } = await supabase
+        .from('files')
+        .select('storage_path')
+        .eq('id', fileId)
+        .eq('owner_id', userId)
+        .maybeSingle();
+      storagePath = row?.storage_path;
+    } catch {
+      // fall through — row delete will still verify ownership
+    }
+
+    if (storagePath) {
+      try {
+        await supabase.storage.from('vault').remove([storagePath]);
+      } catch {
+        // Blob removal is best-effort; the row delete below is the source of truth.
+      }
+    }
+
+    // 2. Delete the database row (verified via returning)
     const { data, error } = await supabase
       .from('files')
       .delete({ count: 'exact' })

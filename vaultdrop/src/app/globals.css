@@ -79,3 +79,55 @@
 .shadow-apple-lg {
   box-shadow: 0 12px 32px -4px rgba(1, 75, 170, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.04);
 }
+
+/* ==============================================================================
+   VaultDrop signature motion system
+   ============================================================================== */
+
+/* Chromatic "water flow" — the full Apple Spectral palette sliding endlessly
+   through a surface (navbar logo tile, badges). Pair with .vd-flow. */
+.vd-flow {
+  background-image: linear-gradient(
+    100deg,
+    #014baa 0%,
+    #0071e3 18%,
+    #5856d6 36%,
+    #af52de 54%,
+    #ff2d55 72%,
+    #ff9500 88%,
+    #014baa 100%
+  );
+  background-size: 300% 100%;
+  animation: vdFlow 3.2s linear infinite;
+}
+
+@keyframes vdFlow {
+  from { background-position: 0% 50%; }
+  to { background-position: 300% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vd-flow { animation: none; }
+}
+
+/* Apple spring entrance for the Login <-> Create Account mode switch */
+.vd-mode-switch {
+  animation: vdCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes vdCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vd-mode-switch { animation: none; }
+}

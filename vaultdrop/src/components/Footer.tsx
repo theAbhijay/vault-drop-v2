@@ -11,7 +11,7 @@ export function Footer() {
           href="https://github.com/theAbhijayChauhan"
           target="_blank"
           rel="noopener noreferrer"
-          className="font-semibold text-[#014BAA] hover:underline"
+          className="font-semibold text-[#014BAA] hover:underline whitespace-nowrap"
         >
           Abhijay Singh Chauhan
         </a>
