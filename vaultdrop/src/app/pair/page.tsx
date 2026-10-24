@@ -23,6 +23,7 @@ import {
   approveLoginSession,
   signInAndApprove,
   resolveHandoffSession,
+  completeHandoffLogin,
   isValidPairToken,
 } from '@/lib/pair-helpers';
 import { UserProfile } from '@/lib/types';
@@ -36,7 +37,8 @@ type PairMode =
   | { kind: 'info' } // no params — generic pairing landing
   | { kind: 'approve'; token: string } // ?token= with a live phone session → ONE TAP
   | { kind: 'auth-approve'; token: string } // ?token= but phone not signed in
-  | { kind: 'handoff-login'; username: string } // ?handoff= resolved, password needed
+  | { kind: 'handoff-open'; token: string; username: string } // ?handoff= → ONE TAP, no password
+  | { kind: 'handoff-login'; username: string } // fallback: code expired, sign in with password
   | { kind: 'approved' };
 
 function PairContent() {
@@ -86,13 +88,13 @@ function PairContent() {
         }
 
         if (current && current.id === resolved.userId) {
-          // Already signed in as this account — truly instant, zero typing.
+          // Already signed in as this account — truly instant, zero taps.
           router.push('/');
           return;
         }
 
         setUsername(resolved.username);
-        setMode({ kind: 'handoff-login', username: resolved.username });
+        setMode({ kind: 'handoff-open', token: handoff, username: resolved.username });
         return;
       }
 
@@ -179,7 +181,38 @@ function PairContent() {
     }
   };
 
-  /** Handoff resolved → sign in on the phone with the account password. */
+  /** Handoff one-tap: consume the one-time code → real session → vault. */
+  const handleOneTapHandoff = async (targetToken: string) => {
+    const minDelay = new Promise((resolve) => setTimeout(resolve, 2000));
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await completeHandoffLogin(targetToken);
+      await minDelay;
+      if (res.success) {
+        router.push('/');
+      } else {
+        // Code expired/used — fall back to the password form (prefilled).
+        setMode((prev) =>
+          prev.kind === 'handoff-open'
+            ? { kind: 'handoff-login', username: prev.username }
+            : prev
+        );
+        setError('The one-time code expired. Sign in with your password below — it only takes a moment.');
+      }
+    } catch {
+      await minDelay;
+      setMode((prev) =>
+        prev.kind === 'handoff-open' ? { kind: 'handoff-login', username: prev.username } : prev
+      );
+      setError('Something went wrong. Sign in with your password below.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Handoff fallback: sign in on the phone with the account password. */
   const handleHandoffLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (mode.kind !== 'handoff-login') return;
@@ -332,6 +365,46 @@ function PairContent() {
     );
   }
 
+  if (mode.kind === 'handoff-open') {
+    return shell(
+      <div className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5DCD4] shadow-apple max-w-md w-full space-y-6">
+        <div className="text-center">
+          <div className="w-14 h-14 bg-[#014BAA]/10 text-[#014BAA] rounded-2xl flex items-center justify-center mx-auto mb-3">
+            <Smartphone className="w-7 h-7" />
+          </div>
+          <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
+            Open Vault for @{mode.username}{' '}
+            <AppleColorText text="One Tap. No Password." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
+          </h2>
+          <p className="text-[13px] text-[#6B6B6B] mt-1">
+            You scanned a one-time handoff code from your PC. Tap below and this vault opens on your
+            phone instantly — the code works a single time and expires in minutes.
+          </p>
+        </div>
+
+        {error && <div className="p-3 bg-red-50 text-[#C8102E] text-[13px] rounded-xl border border-red-200">{error}</div>}
+
+        <div className="space-y-3">
+          <button
+            onClick={() => void handleOneTapHandoff(mode.token)}
+            disabled={busy}
+            className="w-full py-4 bg-[#014BAA] hover:bg-[#013A85] text-white text-[15px] font-semibold rounded-2xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-2"
+          >
+            <Check className="w-5 h-5" />
+            {busy ? 'Opening Vault...' : 'Open Vault on This Phone'}
+          </button>
+
+          <button
+            onClick={() => router.push('/login')}
+            className="w-full py-2.5 text-[13px] text-[#6B6B6B] hover:text-[#1A1A1A] transition-colors tap-spring cursor-pointer"
+          >
+            Not you? Sign in with a different account
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (mode.kind === 'handoff-login') {
     return shell(
       <div className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5DCD4] shadow-apple max-w-md w-full space-y-5">
@@ -340,12 +413,12 @@ function PairContent() {
             <Smartphone className="w-7 h-7" />
           </div>
           <h2 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
-            Open Vault for @{mode.username}{' '}
-            <AppleColorText text="One-Time Handoff." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
+            Sign In for @{mode.username}{' '}
+            <AppleColorText text="On Your Private Phone." className="block text-[14px] font-semibold mt-0.5" mode="chars" />
           </h2>
           <p className="text-[13px] text-[#6B6B6B] mt-1">
-            You scanned a one-time handoff code from your PC. Confirm your password on your personal phone to open the
-            vault here.
+            The one-time code could not be used, so sign in with your password here — safely typed on
+            your own phone, never on a shared keyboard.
           </p>
         </div>
 

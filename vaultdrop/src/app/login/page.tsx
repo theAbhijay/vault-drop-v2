@@ -195,8 +195,8 @@ function LoginContent() {
         </div>
       </header>
 
-      {/* 2. Main Hero: Focused Center Gateway Box */}
-      <main className="max-w-4xl w-full mx-auto px-4 py-8 sm:py-12 flex-1 flex flex-col items-center justify-center">
+      {/* 2. Main Hero: Centered Gateway + Desktop Side Panels */}
+      <main className="max-w-6xl w-full mx-auto px-4 py-8 sm:py-12 flex-1 flex flex-col items-center justify-center">
         {/* Hero Title */}
         <div className="text-center space-y-2 mb-6 sm:mb-8 max-w-lg mx-auto">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#014BAA]/10 text-[#014BAA] text-[11px] sm:text-[12px] font-semibold tracking-wide uppercase font-mono">
@@ -237,8 +237,45 @@ function LoginContent() {
           </div>
         )}
 
-        {/* THE CENTER GATEWAY BOX */}
-        <div className="w-full max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg p-5 sm:p-7 transition-all duration-300">
+        {/* GATEWAY ROW: How-it-works (left) + Gateway Box (center) + Trust facts (right) */}
+        <div className="w-full flex items-center justify-center gap-5 xl:gap-7">
+          {/* Left Panel — How VaultDrop Works (desktop only) */}
+          <aside className="hidden lg:flex flex-col gap-3 w-[220px] xl:w-[250px] flex-shrink-0" aria-label="How VaultDrop works">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#9B9B9B] font-mono px-1">How it works</p>
+            {[
+              {
+                step: '1',
+                title: 'Show the QR here',
+                body: 'This screen displays a fresh, one-time code that lives for 2 minutes.',
+              },
+              {
+                step: '2',
+                title: 'Scan with your phone',
+                body: 'Open Google Lens, your camera, or the VaultDrop scanner and scan this code.',
+              },
+              {
+                step: '3',
+                title: 'Tap Approve',
+                body: 'One tap on your phone — this terminal unlocks instantly. No password anywhere.',
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="p-4 bg-white/80 backdrop-blur-sm rounded-2xl border border-[#E5DCD4] shadow-xs flex items-start gap-3"
+              >
+                <span className="w-6 h-6 rounded-full bg-gradient-to-tr from-[#0071E3] to-[#AF52DE] text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0 font-mono">
+                  {item.step}
+                </span>
+                <div>
+                  <p className="text-[12.5px] font-semibold text-[#1A1A1A] leading-tight">{item.title}</p>
+                  <p className="text-[11.5px] text-[#6B6B6B] leading-snug mt-0.5">{item.body}</p>
+                </div>
+              </div>
+            ))}
+          </aside>
+
+          {/* THE CENTER GATEWAY BOX */}
+          <div className="w-full max-w-md bg-white rounded-3xl border border-[#E5DCD4] shadow-apple-lg p-5 sm:p-7 transition-all duration-300">
           {/* Gateway Mode Switcher: 2 Clean Options */}
           <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#F8F3F0] rounded-2xl border border-[#E5DCD4] mb-6">
             {/* Tab 1: QR Code Login */}
@@ -297,9 +334,9 @@ function LoginContent() {
                       </div>
 
                       <div className="space-y-1 text-center">
-                        <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Camera Scanner</h4>
+                        <h4 className="text-[15px] font-bold text-[#1A1A1A] tracking-tight">Scan to Sign In</h4>
                         <p className="text-[11px] text-[#6B6B6B] leading-tight">
-                          Point camera at the QR code displayed on your PC monitor to log in
+                          Already logged in on a PC? Scan its QR code to sign in here — no password needed
                         </p>
                       </div>
 
@@ -309,13 +346,15 @@ function LoginContent() {
                         className="w-full py-2.5 px-3 bg-[#014BAA] hover:bg-[#013A85] text-white text-[13px] font-semibold rounded-xl shadow-apple transition-all tap-spring cursor-pointer flex items-center justify-center gap-1.5"
                       >
                         <Camera className="w-4 h-4" />
-                        <span>Open Camera</span>
+                        <span>Open Camera Scanner</span>
                       </button>
                     </div>
                   </div>
 
                   <p className="text-[12px] text-[#6B6B6B] max-w-xs mx-auto leading-relaxed">
-                    Point your camera at the PC screen to authorize the session with zero keyboard strokes!
+                    Open Google Lens, your native camera, or any scanner app, point it at the QR on your
+                    PC screen, and tap <span className="font-semibold text-[#014BAA]">Approve</span> — your vault
+                    opens here instantly. Zero passwords, zero typing.
                   </p>
                 </div>
               ) : (
@@ -326,9 +365,9 @@ function LoginContent() {
 
           {/* TAB 2: Username & Password Direct Flow */}
           {activeTab === 'password' && (
-            <div 
-              key={isRegister ? 'register-mode' : 'login-mode'} 
-              className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
+            <div
+              key={isRegister ? 'register-mode' : 'login-mode'}
+              className="space-y-5 animate-in fade-in zoom-in-95 slide-in-from-bottom-8 duration-500 [animation-timing-function:cubic-bezier(0.16,1,0.3,1)]"
             >
               <div className="text-center">
                 <h3 className="text-[18px] font-bold text-[#1A1A1A] tracking-tight">
@@ -366,7 +405,10 @@ function LoginContent() {
                 </div>
 
                 <div>
-                  <label className="block text-[13px] font-semibold text-[#1A1A1A] mb-1">Password</label>
+                  <label className="block text-[13px] font-semibold text-[#1A1A1A] mb-1">
+                    Password{' '}
+                    {isRegister && <span className="text-[11px] text-[#6B6B6B]">(5+ characters)</span>}
+                  </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-[#9B9B9B] absolute left-3 top-3.5" />
                     <input
@@ -413,6 +455,47 @@ function LoginContent() {
               </div>
             </div>
           )}
+          </div>
+
+          {/* Right Panel — Why it's safe (desktop only) */}
+          <aside className="hidden lg:flex flex-col gap-3 w-[220px] xl:w-[250px] flex-shrink-0" aria-label="Security highlights">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#9B9B9B] font-mono px-1">Why it&rsquo;s safe</p>
+            {[
+              {
+                icon: <ShieldCheck className="w-4 h-4 text-[#1B8738]" />,
+                title: 'No passwords on shared PCs',
+                body: 'Your credentials never touch a public keyboard — only your own phone.',
+              },
+              {
+                icon: <Clock className="w-4 h-4 text-[#014BAA]" />,
+                title: '24-hour auto-destruction',
+                body: 'Every file self-destructs after a day. Nothing lingers, anywhere.',
+              },
+              {
+                icon: <HardDrive className="w-4 h-4 text-[#AF52DE]" />,
+                title: 'Private encrypted vault',
+                body: '50 MB of isolated, encrypted-at-rest storage only you can open.',
+              },
+              {
+                icon: <Flame className="w-4 h-4 text-[#C8102E]" />,
+                title: 'Esc 3× panic wipe',
+                body: 'Someone approaching? Press Escape three times — screen cleared instantly.',
+              },
+            ].map((item) => (
+              <div
+                key={item.title}
+                className="p-4 bg-white/80 backdrop-blur-sm rounded-2xl border border-[#E5DCD4] shadow-xs flex items-start gap-3"
+              >
+                <span className="w-8 h-8 rounded-xl bg-[#F8F3F0] border border-[#E5DCD4] flex items-center justify-center flex-shrink-0">
+                  {item.icon}
+                </span>
+                <div>
+                  <p className="text-[12.5px] font-semibold text-[#1A1A1A] leading-tight">{item.title}</p>
+                  <p className="text-[11.5px] text-[#6B6B6B] leading-snug mt-0.5">{item.body}</p>
+                </div>
+              </div>
+            ))}
+          </aside>
         </div>
       </main>
 

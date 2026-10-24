@@ -572,16 +572,22 @@ $$;
 GRANT EXECUTE ON FUNCTION public.consume_login_session(TEXT) TO anon, authenticated;
 
 -- ==============================================================================
--- 6.9 HANDOFF FLOW (logged-in PC → personal phone)
+-- 6.9 HANDOFF FLOW (logged-in PC → personal phone) — ONE TAP, NO PASSWORD
 --
---   PC (auth)     : create_handoff_session()  → { token, expiresAt } (QR)
---   Phone (anon)  : resolve_handoff_session(token) — ONE time, returns ONLY
---                   { userId, username }. This reveals which account to sign
---                   into; it grants NOTHING. The phone then authenticates with
---                   the account password on the trusted personal device.
+--   PC (auth)     : create_handoff_session(refresh_token) → { token, expiresAt }
+--                   Deposits the PC's CURRENT session refresh token (QR).
+--   Phone (anon)  : resolve_handoff_session(token) → { userId, username } —
+--                   read-only, lets the phone show WHICH account it will open.
+--   Phone (anon)  : consume_handoff_session(token) — ONE time (row deleted),
+--                   returns { userId, username, refreshToken } → the phone
+--                   exchanges it for a real session. Single-use + 2-minute TTL
+--                   bound the shoulder-surfing window; the PC reconciles its
+--                   token chain right after (reuse-grace refresh).
+--   PC (anon)     : get_handoff_status(token) — lets the PC detect the consume
+--                   so it can refresh its own session inside the grace window.
 -- ==============================================================================
 
-CREATE OR REPLACE FUNCTION public.create_handoff_session()
+CREATE OR REPLACE FUNCTION public.create_handoff_session(p_refresh_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -594,8 +600,12 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    INSERT INTO public.pairing_sessions (qr_token, kind, user_id)
-    VALUES (v_token, 'handoff', auth.uid());
+    IF p_refresh_token IS NULL OR char_length(p_refresh_token) < 10 THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO public.pairing_sessions (qr_token, kind, user_id, session_refresh_token)
+    VALUES (v_token, 'handoff', auth.uid(), p_refresh_token);
 
     -- Offset-preserving timestamptz (see create_login_session note).
     RETURN jsonb_build_object(
@@ -605,8 +615,9 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.create_handoff_session() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_handoff_session(TEXT) TO authenticated;
 
+-- Read-only: reveals which account the code will open. Grants NOTHING.
 CREATE OR REPLACE FUNCTION public.resolve_handoff_session(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -614,7 +625,36 @@ SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
 DECLARE
+    v_row public.pairing_sessions%ROWTYPE;
+BEGIN
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE qr_token = p_token AND kind = 'handoff' AND status = 'pending'
+    LIMIT 1;
+
+    IF NOT FOUND OR v_row.expires_at <= timezone('utc'::text, now()) THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'userId', v_row.user_id,
+        'username', (SELECT username FROM public.profiles WHERE id = v_row.user_id)
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.resolve_handoff_session(TEXT) TO anon, authenticated;
+
+-- Single-use consume: hands the one-time refresh token to the phone exactly
+-- once, then the row is gone.
+CREATE OR REPLACE FUNCTION public.consume_handoff_session(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
     v_user_id UUID;
+    v_refresh TEXT;
     v_username TEXT;
 BEGIN
     DELETE FROM public.pairing_sessions s
@@ -622,7 +662,7 @@ BEGIN
       AND s.kind = 'handoff'
       AND s.status = 'pending'
       AND s.expires_at > timezone('utc'::text, now())
-    RETURNING s.user_id INTO v_user_id;
+    RETURNING s.user_id, s.session_refresh_token INTO v_user_id, v_refresh;
 
     IF v_user_id IS NULL THEN
         RETURN NULL;
@@ -632,12 +672,41 @@ BEGIN
 
     RETURN jsonb_build_object(
         'userId', v_user_id,
-        'username', v_username
+        'username', v_username,
+        'refreshToken', v_refresh
     );
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.resolve_handoff_session(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.consume_handoff_session(TEXT) TO anon, authenticated;
+
+-- PC-side status polling (detect the consume to reconcile the token chain).
+CREATE OR REPLACE FUNCTION public.get_handoff_status(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_row public.pairing_sessions%ROWTYPE;
+BEGIN
+    SELECT * INTO v_row FROM public.pairing_sessions
+    WHERE qr_token = p_token AND kind = 'handoff'
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('status', 'unknown');  -- consumed or purged
+    END IF;
+
+    IF v_row.expires_at <= timezone('utc'::text, now()) THEN
+        RETURN jsonb_build_object('status', 'expired');
+    END IF;
+
+    RETURN jsonb_build_object('status', v_row.status);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_handoff_status(TEXT) TO anon, authenticated;
 
 -- 6.10 Keep-alive ping target for the GitHub Actions workflow.
 CREATE OR REPLACE FUNCTION public.vaultdrop_ping()
@@ -779,10 +848,12 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated;
 
 -- Retire the v2 RPCs so stale clients fail loudly instead of silently
 -- using the insecure approve/consume path. Also drop the retired v3.0 PIN
--- lookup (PIN fallback removed at the owner's request).
+-- lookup (PIN fallback removed at the owner's request) and the older
+-- zero-arg handoff creator (replaced by the depositing version).
 DROP FUNCTION IF EXISTS public.approve_pairing_session(TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.consume_pairing_session(TEXT);
 DROP FUNCTION IF EXISTS public.resolve_login_pin(TEXT);
+DROP FUNCTION IF EXISTS public.create_handoff_session();
 
 -- ------------------------------------------------------------------------------
 -- END OF SCHEMA

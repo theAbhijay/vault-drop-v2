@@ -115,8 +115,8 @@ export async function registerWithUsername(
     return { success: false, error: validation.error };
   }
 
-  if (password.length < 8) {
-    return { success: false, error: 'Password must be at least 8 characters long.' };
+  if (password.length < 5) {
+    return { success: false, error: 'Password must be at least 5 characters long.' };
   }
 
   const cleanUsername = validation.cleanUsername;
@@ -147,6 +147,13 @@ export async function registerWithUsername(
       }
       if (message.includes('username')) {
         return { success: false, error: 'Username is already taken. Please choose another.' };
+      }
+      if (message.includes('at least') && message.includes('character')) {
+        return {
+          success: false,
+          error:
+            'Your Supabase project enforces a longer minimum password. Lower "Minimum password length" to 5 in Supabase Dashboard → Authentication → Policies, then try again.',
+        };
       }
       // Never surface raw internal errors to end users.
       return { success: false, error: 'Registration failed. Please try again.' };

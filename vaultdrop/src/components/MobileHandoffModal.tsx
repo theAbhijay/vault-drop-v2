@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Smartphone, ShieldCheck, TriangleAlert, RefreshCw } from 'lucide-react';
-import { createHandoffSession, buildHandoffUrl } from '@/lib/pair-helpers';
+import { X, Smartphone, ShieldCheck, TriangleAlert, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { createHandoffSession, buildHandoffUrl, getHandoffStatus } from '@/lib/pair-helpers';
 import { renderChromaticQR } from '@/lib/qr';
 
 interface MobileHandoffModalProps {
@@ -23,8 +24,11 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<boolean>(false);
   const [countdown, setCountdown] = useState<number>(120);
+  const [opened, setOpened] = useState<boolean>(false);
 
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const consumePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeTokenRef = useRef<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -42,12 +46,53 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
   const clearTimer = useCallback(() => {
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     countdownTimerRef.current = null;
+    if (consumePollRef.current) clearInterval(consumePollRef.current);
+    consumePollRef.current = null;
   }, []);
+
+  /**
+   * Once the phone consumes the code (status → 'unknown', row deleted), this
+   * PC refreshes its own session inside GoTrue's reuse grace so BOTH devices
+   * keep working sessions — then shows a success state.
+   */
+  const watchForConsume = useCallback(
+    (token: string) => {
+      if (consumePollRef.current) clearInterval(consumePollRef.current);
+      consumePollRef.current = setInterval(async () => {
+        if (!isMountedRef.current) return;
+        const status = await getHandoffStatus(token);
+        if (!status) return;
+
+        if (status.status === 'unknown') {
+          if (consumePollRef.current) clearInterval(consumePollRef.current);
+          consumePollRef.current = null;
+          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+
+          if (isSupabaseConfigured && supabase) {
+            await supabase.auth.refreshSession().catch(() => {});
+          }
+
+          if (!isMountedRef.current) return;
+          activeTokenRef.current = null;
+          setOpened(true);
+          setTimeout(() => {
+            if (isMountedRef.current) onCloseRef.current();
+          }, 1400);
+        } else if (status.status === 'expired') {
+          if (consumePollRef.current) clearInterval(consumePollRef.current);
+          consumePollRef.current = null;
+        }
+      }, 3000);
+    },
+    []
+  );
 
   const generateCode = useCallback(async () => {
     if (!isMountedRef.current) return;
     setLoading(true);
     setError(false);
+    setOpened(false);
 
     try {
       const session = await createHandoffSession();
@@ -56,6 +101,8 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
       if (!session) {
         throw new Error('Failed to create handoff session');
       }
+
+      activeTokenRef.current = session.token;
 
       const styledSvg = await renderChromaticQR(buildHandoffUrl(session.token), 'appleHandoffGrad');
       if (!isMountedRef.current) return;
@@ -73,13 +120,15 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
           rotateRef.current(); // rotate to a fresh one-time code
         }
       }, 1000);
+
+      watchForConsume(session.token);
     } catch (err) {
       console.error('Failed to generate mobile handoff QR:', err);
       if (!isMountedRef.current) return;
       setError(true);
       setLoading(false);
     }
-  }, [clearTimer]);
+  }, [clearTimer, watchForConsume]);
 
   // Keep the rotate ref pointing at the latest generateCode identity.
   useEffect(() => {
@@ -158,9 +207,9 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
 
         <h3 className="text-[19px] font-bold text-[#1A1A1A] tracking-tight">Open on Smartphone</h3>
         <p className="text-[13px] text-[#6B6B6B] mt-1 mb-5">
-          Scan this one-time code with your phone camera. Already signed in as the same account? Your
-          vault opens instantly — otherwise your username is pre-filled and you just confirm your
-          password on your phone.
+          Scan this one-time code with your phone camera or any scanner app, then tap{' '}
+          <span className="font-semibold text-[#014BAA]">Open</span> — your vault unlocks on your phone instantly.
+          No password needed.
         </p>
 
         {/* Apple Gradient QR Container */}
@@ -182,22 +231,29 @@ export function MobileHandoffModal({ isOpen, onClose }: MobileHandoffModalProps)
                   Try Again
                 </button>
               </div>
+            ) : opened ? (
+              <div className="flex flex-col items-center gap-2 text-[#1B8738] animate-in zoom-in-95 duration-300">
+                <CheckCircle2 className="w-14 h-14" />
+                <span className="text-[13px] font-semibold text-[#1A1A1A]">Vault opened on your phone</span>
+              </div>
             ) : (
               <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: qrSvg }} />
             )}
           </div>
         </div>
 
-        {!loading && !error && (
+        {!loading && !error && !opened && (
           <div className="mb-3 text-[12px] font-mono text-[#6B6B6B]">
             Code refreshes in {minutes.toString().padStart(2, '0')}:{seconds.toString().padStart(2, '0')}
           </div>
         )}
 
-        <div className="flex items-center justify-center gap-1.5 text-[12px] text-[#1B8738] font-medium font-mono">
-          <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-          <span>One-Time Code • Single Use • 2-Minute Expiry</span>
-        </div>
+        {!opened && (
+          <div className="flex items-center justify-center gap-1.5 text-[12px] text-[#1B8738] font-medium font-mono">
+            <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+            <span>One-Time Code • Single Use • 2-Minute Expiry</span>
+          </div>
+        )}
       </div>
     </div>
   );

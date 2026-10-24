@@ -235,16 +235,30 @@ export async function completeWorkstationLogin(
 }
 
 // ==============================================================================
-// HANDOFF (logged-in PC → phone). See supabase_schema.sql §6.9.
-// The QR carries ONLY an opaque token; resolving it reveals which account to
-// sign into — never a session. The phone authenticates with the password on
-// the trusted personal device.
+// HANDOFF (logged-in PC → phone) — ONE TAP, NO PASSWORD.
+// The PC deposits its current session token behind a one-time code; the phone
+// consumes it and receives a real session. Single-use + 2-minute TTL bound the
+// shoulder-surfing window.
 // ==============================================================================
 
-export async function createHandoffSession(): Promise<{ token: string; expiresAt: string } | null> {
+export interface CreatedHandoffSession {
+  token: string;
+  expiresAt: string;
+}
+
+/** PC side: create the one-time handoff code, depositing this session's token. */
+export async function createHandoffSession(): Promise<CreatedHandoffSession | null> {
   if (!(isSupabaseConfigured && supabase)) return null;
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const refresh = sessionData?.session?.refresh_token;
+  if (!refresh) return null;
+
   try {
-    const { data, error } = await withTimeout(supabase.rpc('create_handoff_session'), 5000);
+    const { data, error } = await withTimeout(
+      supabase.rpc('create_handoff_session', { p_refresh_token: refresh }),
+      5000
+    );
     if (error || !data?.token) return null;
     return { token: data.token as string, expiresAt: normalizeServerTimestamp(data.expiresAt) };
   } catch {
@@ -252,6 +266,7 @@ export async function createHandoffSession(): Promise<{ token: string; expiresAt
   }
 }
 
+/** Phone side: read-only — which account will this code open? */
 export async function resolveHandoffSession(token: string): Promise<ResolvedHandoff | null> {
   if (!(isSupabaseConfigured && supabase)) return null;
   try {
@@ -261,6 +276,67 @@ export async function resolveHandoffSession(token: string): Promise<ResolvedHand
     );
     if (error || !data?.userId) return null;
     return { userId: data.userId as string, username: data.username as string };
+  } catch {
+    return null;
+  }
+}
+
+/** Phone side: consume the code ONE time and install a real session. */
+export async function completeHandoffLogin(
+  token: string
+): Promise<{ success: boolean; user?: UserProfile; error?: string }> {
+  if (!(isSupabaseConfigured && supabase)) {
+    return { success: false, error: 'VaultDrop is not configured.' };
+  }
+
+  let consumed: ConsumedLoginSession | null = null;
+  try {
+    const { data, error } = await withTimeout(
+      supabase.rpc('consume_handoff_session', { p_token: token }),
+      5000
+    );
+    if (error || !data) {
+      return { success: false, error: 'expired' };
+    }
+    consumed = data as ConsumedLoginSession;
+  } catch {
+    return { success: false, error: 'expired' };
+  }
+
+  const exchanged = await exchangeRefreshToken(consumed.refreshToken);
+  if (!exchanged) {
+    return { success: false, error: 'expired' };
+  }
+
+  const { error: setError } = await supabase.auth.setSession({
+    access_token: exchanged.accessToken,
+    refresh_token: exchanged.refreshToken,
+  });
+  if (setError) {
+    return { success: false, error: 'expired' };
+  }
+
+  const profile = await fetchUserProfile(consumed.userId, consumed.username);
+  if (!profile) {
+    return { success: false, error: 'expired' };
+  }
+
+  establishSessionWindow();
+  return { success: true, user: profile };
+}
+
+/** PC side: poll the code's status — 'unknown' means the phone consumed it. */
+export async function getHandoffStatus(
+  token: string
+): Promise<{ status: 'pending' | 'expired' | 'unknown' } | null> {
+  if (!(isSupabaseConfigured && supabase)) return null;
+  try {
+    const { data, error } = await withTimeout(
+      supabase.rpc('get_handoff_status', { p_token: token }),
+      3000
+    );
+    if (error || !data?.status) return null;
+    return data as { status: 'pending' | 'expired' | 'unknown' };
   } catch {
     return null;
   }
