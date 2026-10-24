@@ -243,13 +243,12 @@ function PairContent() {
       <header className="sticky top-0 z-40 glass-surface border-b border-[#E5DCD4]/80 px-4 md:px-8 py-3.5">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl vd-flow flex items-center justify-center text-white shadow-apple">
+            <div className="w-8 h-8 rounded-xl bg-[#014BAA] flex items-center justify-center text-white shadow-apple">
               <Shield className="w-4.5 h-4.5 fill-white" />
             </div>
             <div>
               <div className="flex items-center gap-0.5">
-                <span className="text-[16px] font-bold tracking-tight text-[#014BAA]">Vault</span>
-                <AppleColorText text="Drop" className="text-[16px] font-bold tracking-tight" mode="chars" />
+                <span className="text-[16px] font-bold tracking-tight vd-text-flow">VaultDrop</span>
               </div>
               <span className="text-[11px] text-[#6B6B6B] block -mt-0.5 font-mono">Workstation Pairing</span>
             </div>

@@ -29,6 +29,7 @@ import { Footer } from '@/components/Footer';
 import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 import { loginWithUsername, registerWithUsername, getCurrentUser, logoutUser } from '@/lib/auth-helpers';
 import { isValidPairToken } from '@/lib/pair-helpers';
+import { BrandLogo } from '@/components/BrandLogo';
 
 type GatewayTab = 'qr' | 'password';
 
@@ -168,13 +169,10 @@ function LoginContent() {
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
           {/* Brand Logo */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl vd-flow flex items-center justify-center text-white shadow-apple">
-              <Shield className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-white" />
-            </div>
+            <BrandLogo className="w-8 h-8 sm:w-9 sm:h-9 drop-shadow-sm" />
             <div>
               <div className="flex items-center gap-0.5">
-                <span className="text-[16px] sm:text-[17px] font-bold tracking-tight text-[#014BAA]">Vault</span>
-                <AppleColorText text="Drop" className="text-[16px] sm:text-[17px] font-bold tracking-tight" mode="chars" />
+                <span className="text-[16px] sm:text-[17px] font-bold tracking-tight vd-text-flow">VaultDrop</span>
               </div>
               <span className="text-[10px] sm:text-[11px] text-[#6B6B6B] block -mt-0.5 font-mono">v1.0 • Ephemeral File Vault</span>
             </div>

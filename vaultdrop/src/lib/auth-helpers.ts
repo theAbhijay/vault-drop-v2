@@ -5,7 +5,7 @@ import { UserProfile } from './types';
  * VaultDrop session rules (single source of truth):
  *  - Workstation session TTL: 30 minutes, enforced client-side AND backed by the
  *    server-side Supabase session (validated via auth.getUser() on every mount).
- *  - Account lifecycle: 30 days after last activity, enforced in Postgres.
+ *  - Account lifecycle: 7 days after last activity, enforced in Postgres.
  *  - Nothing that grants access is ever written to localStorage. The auth
  *    session lives in sessionStorage (tab-scoped) and dies with the tab.
  */
@@ -208,7 +208,7 @@ export async function registerWithUsername(
     }
 
     const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     users[cleanUsername] = { username: cleanUsername, password, createdAt: now, expiresAt };
     localStorage.setItem(MOCK_STORAGE_KEY_USERS, JSON.stringify(users));
 
@@ -294,7 +294,7 @@ export async function loginWithUsername(
 
     if (new Date(profile.accountExpiresAt).getTime() <= Date.now()) {
       await supabase.auth.signOut().catch(() => {});
-      return { success: false, error: 'This account has expired (30 days of inactivity).' };
+      return { success: false, error: 'This account has expired (7 days of inactivity).' };
     }
 
     establishSessionWindow();
@@ -310,7 +310,7 @@ export async function loginWithUsername(
     }
 
     const now = new Date().toISOString();
-    existing.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    existing.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     localStorage.setItem(MOCK_STORAGE_KEY_USERS, JSON.stringify(users));
 
     establishSessionWindow();

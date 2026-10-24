@@ -41,7 +41,7 @@ Every day, millions of students and researchers log into shared computers in uni
 - **Zero Keystrokes on Shared Hardware**: You never type your password or username on the lab keyboard.
 - **Instant Pair & Auto-Vanish**: Open the site on the lab PC $\rightarrow$ scan the 2-minute dynamic QR code using your phone's native camera $\rightarrow$ authorize $\rightarrow$ the lab PC unlocks automatically.
 - **Air-Tight Session Quarantine**: 30-minute hard TTL auto-wipe + 2-minute idle alert + instant `Esc 3x` Panic Wipe.
-- **Autonomous Ephemeral Storage**: Uploaded files incinerate automatically after 24 hours. Inactive student profiles auto-purge after 30 days.
+- **Autonomous Ephemeral Storage**: Uploaded files incinerate automatically after 24 hours. Inactive accounts auto-purge after 7 days.
 
 ---
 
@@ -88,7 +88,7 @@ VaultDrop was engineered from the ground up according to the **Apple Human Inter
 - **50 MB Strict Quota**: Enforced before file write at the PostgreSQL database level (`enforce_storage_quota_trigger`).
 - **Zero Orphaned Blobs**: Storage object trigger (`delete_storage_object_trigger`) automatically removes the physical storage file from Supabase S3 when its database metadata row is deleted.
 - **24-Hour File Shredder**: Files older than 24 hours are automatically pruned by background cron tasks.
-- **30-Day Dormant Account Purge**: Frees up database storage by automatically purging test or inactive accounts whose last active timestamp is older than 30 days.
+- **7-Day Dormant Account Purge**: Frees up database storage by automatically purging test or inactive accounts whose last active timestamp is older than 7 days.
 
 ---
 

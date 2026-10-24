@@ -131,3 +131,23 @@
 @media (prefers-reduced-motion: reduce) {
   .vd-mode-switch { animation: none; }
 }
+
+/* Chromatic water-flow ON THE TEXT itself (brand word) */
+.vd-text-flow {
+  background-image: linear-gradient(
+    100deg,
+    #014baa 0%,
+    #0071e3 18%,
+    #5856d6 36%,
+    #af52de 54%,
+    #ff2d55 72%,
+    #ff9500 88%,
+    #014baa 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: vdFlow 3.2s linear infinite;
+}

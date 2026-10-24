@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     storage_cap_mb INTEGER NOT NULL DEFAULT 50,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     last_active_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    -- Account expires 30 days after LAST ACTIVITY (not creation)
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '30 days'),
+    -- Account expires 7 days after LAST ACTIVITY (not creation)
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + INTERVAL '7 days'),
     CONSTRAINT username_length_check CHECK (char_length(username) >= 5),
     CONSTRAINT username_lowercase_check CHECK (username = lower(username)),
     CONSTRAINT username_charset_check CHECK (username ~ '^[a-z0-9_]+$')
@@ -72,6 +72,13 @@ CREATE TABLE IF NOT EXISTS public.files (
     CONSTRAINT storage_path_owner_prefix_check
         CHECK (storage_path LIKE 'user_' || owner_id::text || '/%')
 );
+
+-- v3.2: reduce account lifetime from 30 days to 7 days (owner decision).
+-- Applies to the column default AND squeezes any existing rows into the new window.
+ALTER TABLE public.profiles ALTER COLUMN expires_at
+    SET DEFAULT (timezone('utc'::text, now()) + INTERVAL '7 days');
+UPDATE public.profiles
+SET expires_at = LEAST(expires_at, timezone('utc'::text, now()) + INTERVAL '7 days');
 
 -- Hardening for pre-existing v2 deployments (new tables get these via CREATE above)
 DO $$
@@ -304,7 +311,7 @@ BEGIN
     UPDATE public.profiles
     SET
         last_active_at = timezone('utc'::text, now()),
-        expires_at = timezone('utc'::text, now()) + INTERVAL '30 days'
+        expires_at = timezone('utc'::text, now()) + INTERVAL '7 days'
     WHERE id = auth.uid();
 END;
 $$;

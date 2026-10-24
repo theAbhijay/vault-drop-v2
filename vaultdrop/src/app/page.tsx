@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { OpenSourceLink } from '@/components/OpenSourceLink';
 import { Footer } from '@/components/Footer';
+import { BrandLogo } from '@/components/BrandLogo';
 import { MobileHandoffModal } from '@/components/MobileHandoffModal';
 import { CameraQRScannerModal } from '@/components/CameraQRScannerModal';
 
@@ -447,13 +448,9 @@ export default function DashboardPage() {
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
           {/* Logo & User Badge */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            <div className="w-8 h-8 rounded-xl sm:rounded-2xl vd-flow flex items-center justify-center text-white shadow-apple">
-              <Shield className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
-            </div>
+            <BrandLogo className="w-8 h-8 drop-shadow-sm" />
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-[16px] sm:text-[17px] font-bold text-[#014BAA] tracking-tight">
-                Vault<AppleColorText text="Drop" mode="chars" />
-              </span>
+              <span className="vd-text-flow">VaultDrop</span>
               <span className="hidden sm:inline-block text-[11px] sm:text-[12px] font-semibold bg-[#014BAA]/10 text-[#014BAA] px-2 py-0.5 rounded-full font-mono">
                 @{user.username}
               </span>
